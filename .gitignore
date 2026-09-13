@@ -1,0 +1,8 @@
+local/*
+target/
+project/target/
+data/*.csv
+data/*.part
+output/
+.vscode
+.metals

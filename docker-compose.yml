@@ -1,0 +1,9 @@
+services:
+  ingestion:
+    build: .
+    command: ["/data/debs2022-gc-trading-day-08-11-21.csv", "/output/events.ndjson"]
+    environment:
+      INGESTION_PROGRESS_INTERVAL_ROWS: "1000000"
+    volumes:
+      - ./data:/data:ro
+      - ./output:/output

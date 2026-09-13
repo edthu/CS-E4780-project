@@ -1,0 +1,10 @@
+data/
+output/
+target/*
+!target/scala-3.3.4/
+!target/scala-3.3.4/cs-e4780-ingestion-assembly-0.1.0-SNAPSHOT.jar
+project/target/
+.git/
+.metals/
+.vscode/
+local/
