@@ -39,6 +39,9 @@ one-topic-per-symbol).
 
 ## Target architecture
 
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for Mermaid diagrams (data flow,
+Compose deployment, build flow, module dependencies).
+
 ```
 CSV ──▶ ingestion ──▶ events.ndjson ──▶ producer ──▶ [trading-events] ──▶ streams
                                                                               │
