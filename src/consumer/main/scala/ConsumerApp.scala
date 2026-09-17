@@ -36,7 +36,11 @@ object ConsumerApp:
     consumer.subscribe(java.util.List.of(topic))
     println(s"[consumer] bootstrap=$bootstrap topic=$topic group=$group level=$level (Ctrl-C to stop)")
 
-    sys.addShutdownHook(consumer.wakeup())
+    @volatile var running = true
+    sys.addShutdownHook {
+      running = false
+      consumer.wakeup()
+    }
 
     val startedAt = System.nanoTime()
     var consumed = 0L
@@ -47,22 +51,30 @@ object ConsumerApp:
       if nanos <= 0 then 0.0 else delta * 1e9 / nanos
 
     try
-      while true do
-        val records = consumer.poll(Duration.ofMillis(500))
-        for record <- records.asScala do
-          consumed += 1
-          if level == "ALL" then println(s"${record.key()} -> ${record.value()}")
-        if level == "SUMMARY" then
-          val now = System.nanoTime()
-          if now - lastSummaryAt >= summaryIntervalMs * 1000000L && consumed > lastSummaryCount then
-            val intervalRps = rate(consumed - lastSummaryCount, now - lastSummaryAt)
-            val avgRps = rate(consumed, now - startedAt)
-            println(
-              f"[consumer] consumed=$consumed recordsPerSecond=$intervalRps%.1f avgRecordsPerSecond=$avgRps%.1f"
-            )
-            lastSummaryAt = now
-            lastSummaryCount = consumed
-    catch case _: WakeupException => ()
+      while running do
+        // Keep polling forever so the consumer survives quiet periods (the
+        // producer between batches) and transient errors like a topic being
+        // deleted/recreated by scripts/reset-topics.sh — new data resumes flow.
+        try
+          val records = consumer.poll(Duration.ofMillis(500))
+          for record <- records.asScala do
+            consumed += 1
+            if level == "ALL" then println(s"${record.key()} -> ${record.value()}")
+          if level == "SUMMARY" then
+            val now = System.nanoTime()
+            if now - lastSummaryAt >= summaryIntervalMs * 1000000L && consumed > lastSummaryCount then
+              val intervalRps = rate(consumed - lastSummaryCount, now - lastSummaryAt)
+              val avgRps = rate(consumed, now - startedAt)
+              println(
+                f"[consumer] consumed=$consumed recordsPerSecond=$intervalRps%.1f avgRecordsPerSecond=$avgRps%.1f"
+              )
+              lastSummaryAt = now
+              lastSummaryCount = consumed
+        catch
+          case _: WakeupException => running = false
+          case e: Exception if running =>
+            System.err.println(s"[consumer] poll error (retrying): ${e.getMessage}")
+            Thread.sleep(1000)
     finally
       val elapsedMillis = (System.nanoTime() - startedAt) / 1000000L
       val avgRps = rate(consumed, System.nanoTime() - startedAt)

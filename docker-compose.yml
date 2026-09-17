@@ -44,9 +44,13 @@ services:
         MODULE: producer
         MAIN_CLASS: ProducerApp
     command: ["/output/events.ndjson"]
+    restart: on-failure
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events
+      # Stay alive after draining the file and keep publishing appended lines,
+      # so the pipeline keeps flowing when more data arrives at any time.
+      PRODUCER_FOLLOW: "true"
     volumes:
       - ./output:/output:ro
     depends_on:
@@ -59,6 +63,7 @@ services:
       args:
         MODULE: streams
         MAIN_CLASS: StreamsApp
+    restart: unless-stopped
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_INPUT_TOPIC: trading-events
@@ -73,12 +78,13 @@ services:
       args:
         MODULE: consumer
         MAIN_CLASS: ConsumerApp
+    restart: unless-stopped
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events-processed
       KAFKA_GROUP: trading-consumer
       # SUMMARY = periodic throughput stats; ALL = print every record.
-      CONSUMER_LOG_LEVEL: SUMMARY
+      CONSUMER_LOG_LEVEL: ALL
     depends_on:
       kafka:
         condition: service_healthy

@@ -115,8 +115,9 @@ docker compose up -d --build kafka streams consumer
 #    scripts/download-data.sh). Skip if ./output/events.ndjson already exists.
 docker compose run --rm ingestion
 
-# 4. Publish the NDJSON to the trading-events topic
-docker compose run --rm producer
+# 4. Start the producer as a long-running service. In follow mode it drains the
+#    file and then stays alive, publishing any lines appended later.
+docker compose up -d producer
 
 # 5. Watch the processed output
 docker compose logs -f consumer
@@ -124,6 +125,26 @@ docker compose logs -f consumer
 
 Topics are auto-created on first use. Inside the Compose network the apps reach
 the broker at `kafka:19092`; from the host it's `localhost:9092`.
+
+### Long-running vs batch
+
+`producer`, `streams`, and `consumer` are meant to keep running so the pipeline
+stays live even when there is a lull — more tick data can arrive at any time.
+
+- **Producer** defaults to batch (read to EOF, exit). The Compose service sets
+  `PRODUCER_FOLLOW=true`, so it tails the NDJSON file (`tail -f` style) and
+  publishes newly-appended lines instead of exiting. Pass `--follow` or set
+  `PRODUCER_FOLLOW=true` to get this outside Compose; `PRODUCER_FOLLOW_INTERVAL_MS`
+  (default 1000) tunes the poll cadence.
+- **Consumer** polls forever and now retries transient poll errors (e.g. a topic
+  being deleted/recreated by `reset-topics.sh`) instead of exiting.
+- The three services use Docker `restart` policies (`unless-stopped` for
+  streams/consumer, `on-failure` for the producer) so a crash self-heals without
+  the batch producer re-sending the whole file on a clean exit.
+
+Because the producer follows and the consumer tolerates the topic churn, running
+`scripts/reset-topics.sh` no longer leaves them dead — they stay up and resume
+once new data flows through the fresh topics.
 
 ### Locally with sbt
 
