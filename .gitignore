@@ -6,3 +6,6 @@ data/*.part
 output/
 .vscode
 .metals
+.bsp
+assignments.txt
+plan.png
