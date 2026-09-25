@@ -7,7 +7,7 @@
 #
 #   1. stop the streams container AND any stray local `sbt streams/run`
 #   2. delete the data topics + any streams internal topics
-#   3. recreate the data topics with a fixed partition count
+#   3. recreate the topics with a fixed partition count (via create-topics.sh)
 #   4. start streams as a container
 #
 # Usage:
@@ -28,7 +28,7 @@ STREAMS_SVC="${STREAMS_SVC:-streams}"
 BOOTSTRAP="${BOOTSTRAP:-localhost:9092}"
 PARTITIONS="${PARTITIONS:-6}"
 APP_ID="${APP_ID:-trading-streams}"
-TOPICS=("trading-events" "trading-events-processed")
+TOPICS=("trading-events" "trading-events-processed" "advisories" "symbols")
 
 BUILD=0
 [[ "${1:-}" == "--build" ]] && BUILD=1
@@ -60,7 +60,7 @@ delete_topic() {
   fi
 }
 
-echo "==> deleting data topics"
+echo "==> deleting data topics (incl. advisories + the symbol registry)"
 for t in "${TOPICS[@]}"; do delete_topic "$t"; done
 
 echo "==> deleting streams internal topics ('${APP_ID}-*', if any)"
@@ -76,11 +76,13 @@ for t in "${TOPICS[@]}"; do
   done
 done
 
-echo "==> recreating data topics ($PARTITIONS partitions, RF 1)"
-for t in "${TOPICS[@]}"; do
-  kt --create --topic "$t" --partitions "$PARTITIONS" --replication-factor 1 --if-not-exists >/dev/null
-  echo "    created $t"
-done
+# Delegate to create-topics.sh (piped into the broker container) so the reset
+# path and the kafka-init service create topics with identical configs -- the
+# compacted `symbols` registry in particular cannot be recreated with a plain
+# --create.
+echo "==> recreating topics via scripts/create-topics.sh"
+compose exec -T -e BOOTSTRAP="$BOOTSTRAP" -e PARTITIONS="$PARTITIONS" \
+  "$KAFKA_SVC" bash -s <"$ROOT_DIR/scripts/create-topics.sh"
 
 if [[ "$BUILD" == "1" ]]; then
   echo "==> rebuilding streams jar + image"

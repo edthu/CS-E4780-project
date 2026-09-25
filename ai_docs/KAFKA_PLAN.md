@@ -1,5 +1,12 @@
 # Kafka Producer / Consumer / Streams Plan
 
+> **Status: historical.** This is the original plan for the Kafka *demo*
+> milestone, when the streams app only added a `processedBy` marker field. That
+> placeholder has since been replaced by the real Query 1 (EMA over 5-minute
+> tumbling windows) and Query 2 (crossover advisories) logic, plus a symbol
+> registry and a Streamlit UI. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
+> current architecture and the motivation behind each choice.
+
 CS-E4780 course project — Detecting Trading Trends in Financial Tick Data.
 
 This document describes the plan for adding the Kafka layer on top of the

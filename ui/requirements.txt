@@ -1,0 +1,6 @@
+streamlit==1.41.1
+plotly==5.24.1
+requests==2.32.3
+# kafka-python is unmaintained and fails on Python >= 3.12 (it still imports the
+# removed `distutils`); -ng is the maintained fork with the same import name.
+kafka-python-ng==2.2.3

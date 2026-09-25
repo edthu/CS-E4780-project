@@ -24,6 +24,22 @@ services:
       timeout: 10s
       retries: 10
 
+  # One-shot: creates the topics with explicit partition counts, and the
+  # `symbols` registry with cleanup.policy=compact. Auto-creation can do
+  # neither, and a 1-partition topic would cap streams parallelism at one task.
+  kafka-init:
+    image: apache/kafka:3.8.1
+    restart: "no"
+    entrypoint: ["bash", "/scripts/create-topics.sh"]
+    environment:
+      BOOTSTRAP: kafka:19092
+      PARTITIONS: "6"
+    volumes:
+      - ./scripts:/scripts:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   ingestion:
     build:
       context: .
@@ -48,14 +64,14 @@ services:
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events
-      # Stay alive after draining the file and keep publishing appended lines,
-      # so the pipeline keeps flowing when more data arrives at any time.
       PRODUCER_FOLLOW: "true"
     volumes:
       - ./output:/output:ro
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
   streams:
     build:
@@ -64,13 +80,39 @@ services:
         MODULE: streams
         MAIN_CLASS: StreamsApp
     restart: unless-stopped
+    # Deliberately `expose`, not `ports`: publishing a host port would prevent
+    # `docker compose up --scale streams=N`. The UI reaches the service by name
+    # and any replica can answer any query by proxying to the instance that owns
+    # the symbol's partition.
+    expose:
+      - "7070"
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_INPUT_TOPIC: trading-events
       KAFKA_OUTPUT_TOPIC: trading-events-processed
+      KAFKA_ADVISORY_TOPIC: advisories
+      KAFKA_SYMBOL_TOPIC: symbols
+      STREAMS_QUERY_PORT: "7070"
+      STREAMS_STATE_DIR: /var/lib/kafka-streams
+      STREAMS_STANDBY_REPLICAS: "0"
+      EMA_HISTORY_RETENTION_DAYS: "8"
+    volumes:
+      # Keeps RocksDB state across restarts so the app restores locally instead
+      # of replaying every changelog from the broker. Each replica gets its own
+      # subdirectory here (keyed by container hostname) because Streams locks
+      # its state directory exclusively.
+      - streams-state:/var/lib/kafka-streams
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:7070/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
 
   consumer:
     build:
@@ -83,8 +125,33 @@ services:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events-processed
       KAFKA_GROUP: trading-consumer
-      # SUMMARY = periodic throughput stats; ALL = print every record.
       CONSUMER_LOG_LEVEL: ALL
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+
+  ui:
+    build:
+      context: ./ui
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      KAFKA_BOOTSTRAP: kafka:19092
+      SYMBOLS_TOPIC: symbols
+      STREAMS_QUERY_URL: http://streams:7070
+      UI_REFRESH_SECONDS: "5"
+      SYMBOL_CACHE_TTL: "60"
+      UI_MAX_POINTS: "1000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      streams:
+        condition: service_healthy
+
+volumes:
+  streams-state:
