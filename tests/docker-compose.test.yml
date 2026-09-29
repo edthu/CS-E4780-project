@@ -1,0 +1,58 @@
+# Override for the e2e and perf harnesses. Always used together with the main
+# docker-compose.yml and a dedicated project name (-p trading-e2e / trading-perf,
+# see tests/harness/stack.py), so it never touches the normal stack or its volumes.
+#
+# Paths are relative to the repo root (the project directory of the first -f file).
+services:
+  kafka:
+    # Remapped so the tests can run while the normal stack holds 9092.
+    ports: !override
+      - "29092:9092"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:29092
+      # Without this the image falls back to Kafka's default /tmp/kafka-logs in
+      # the container layer. On a fuse-overlayfs Docker host those writes are
+      # done by the FUSE daemon and never charged to the container's cgroup, so
+      # io.stat / io.pressure would read zero. A volume makes them attributable.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_OPTS: -javaagent:/jmx/agent.jar=9404:/jmx/exporter.yml
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./tests/jmx:/jmx:ro
+    healthcheck:
+      # KAFKA_OPTS is cleared so the CLI JVM does not try to bind the agent's
+      # port too; INTERNAL listener because EXTERNAL advertises a host port.
+      test: ["CMD-SHELL", "KAFKA_OPTS= /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list || exit 1"]
+
+  producer:
+    command: ["/output/events.ndjson"]
+    restart: unless-stopped
+    environment:
+      PRODUCER_FOLLOW: "true"
+      # The default 1000 ms poll would dominate the measured latency.
+      PRODUCER_FOLLOW_INTERVAL_MS: "20"
+      JAVA_TOOL_OPTIONS: -javaagent:/jmx/agent.jar=9404:/jmx/exporter.yml
+    volumes: !override
+      - ./tests/.work/output:/output:ro
+      - ./tests/jmx:/jmx:ro
+
+  streams:
+    environment:
+      STREAMS_METRICS_LEVEL: DEBUG
+      JAVA_TOOL_OPTIONS: -javaagent:/jmx/agent.jar=9404:/jmx/exporter.yml
+    volumes:
+      - ./tests/jmx:/jmx:ro
+
+  consumer:
+    environment:
+      CONSUMER_LOG_LEVEL: SUMMARY
+      JAVA_TOOL_OPTIONS: -javaagent:/jmx/agent.jar=9404:/jmx/exporter.yml
+    volumes:
+      - ./tests/jmx:/jmx:ro
+
+  ui:
+    ports: !override
+      - "18501:8501"
+
+volumes:
+  kafka-data:

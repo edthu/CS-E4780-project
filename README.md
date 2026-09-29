@@ -130,3 +130,7 @@ sbt test
 `StreamsTopologySuite` runs the real topology through a `TopologyTestDriver`:
 EMA enrichment, one EMA step per *closed* window, crossover advisories, and
 symbol-registry deduplication.
+
+The end-to-end test (real Compose stack vs. an independent reference of the
+assignment) and the performance harness (latency, CPU, memory and storage I/O
+time per container) are described in [`tests/TESTS.md`](tests/TESTS.md).

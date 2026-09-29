@@ -9,3 +9,11 @@ output/
 .bsp
 assignments.txt
 plan.png
+
+# test harness
+tests/.venv/
+tests/.work/
+tests/results/
+tests/jmx/*.jar
+.pytest_cache/
+__pycache__/

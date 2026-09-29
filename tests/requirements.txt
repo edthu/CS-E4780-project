@@ -1,0 +1,6 @@
+pytest==9.1.1
+requests==2.34.2
+# Same client the UI uses; kafka-python is broken on Python >= 3.12.
+kafka-python-ng==2.2.3
+docker==7.2.0
+matplotlib==3.11.2

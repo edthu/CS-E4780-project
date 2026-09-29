@@ -1,0 +1,7 @@
+# Prometheus JMX exporter config shared by every JVM container in test/perf
+# runs. Catch-all: the harness picks the metrics it needs by name, so there is
+# nothing to keep in sync here when a metric is added to the report.
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  - pattern: ".*"
