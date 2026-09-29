@@ -53,13 +53,14 @@ class StreamsTopologySuite extends munit.FunSuite:
       assert(processedObj("ema38").num > 0)
       assert(processedObj("ema100").num > 0)
 
-      // The first window closes with EMA38 == EMA100 (both seeded from zero),
-      // so the only crossover is the second window's rise to 50.0.
+      // With EMA_{s,w0} = 0 the first window already crosses (EMA38 = 2c/39 >
+      // EMA100 = 2c/101 against 0 <= 0), so the only crossover is window 1.
+      // Window 2 keeps EMA38 above EMA100, so it emits nothing.
       val advisoryRecord = advisoryOut.readKeyValue()
       assertEquals(advisoryRecord.key, "RDSA.NL")
       val advisoryObj = ujson.read(advisoryRecord.value)
       assertEquals(advisoryObj("signal").str, "BUY")
-      assertEquals(advisoryObj("close").num, 50.0)
+      assertEquals(advisoryObj("close").num, 42.5)
       assert(advisoryObj("ema38").num > advisoryObj("ema100").num)
 
       val secondProcessedRecord = processedOut.readKeyValue()
@@ -96,18 +97,22 @@ class StreamsTopologySuite extends munit.FunSuite:
       assertEquals(points(0)("close").num, 20.0)
       assertEquals(points(1)("close").num, 30.0)
 
-      // EMA seeded from zero collapses to the close on the first window.
-      assertEquals(points(0)("ema38").num, 20.0)
-      assertEquals(points(0)("ema100").num, 20.0)
+      // EMA_{s,w0} = 0, so the first window is the close weighted against zero.
+      val fast1 = 20.0 * 2.0 / 39.0
+      val slow1 = 20.0 * 2.0 / 101.0
+      assert(Math.abs(points(0)("ema38").num - fast1) < 1e-12)
+      assert(Math.abs(points(0)("ema100").num - slow1) < 1e-12)
 
-      val expectedFast = StreamsApp.calculateEma(20.0, 30.0, 38)
-      val expectedSlow = StreamsApp.calculateEma(20.0, 30.0, 100)
-      assert(Math.abs(points(1)("ema38").num - expectedFast) < 1e-12)
-      assert(Math.abs(points(1)("ema100").num - expectedSlow) < 1e-12)
+      // Exactly one EMA step per closed window, from the previous window's EMA.
+      val fast2 = (2.0 / 39.0) * 30.0 + (1.0 - 2.0 / 39.0) * fast1
+      val slow2 = (2.0 / 101.0) * 30.0 + (1.0 - 2.0 / 101.0) * slow1
+      assert(Math.abs(points(1)("ema38").num - fast2) < 1e-12)
+      assert(Math.abs(points(1)("ema100").num - slow2) < 1e-12)
 
-      // The crossover on window 2 is recorded alongside the EMA values.
-      assertEquals(points(0)("signal"), ujson.Null)
-      assertEquals(points(1)("signal").str, "BUY")
+      // The first-window crossover is recorded alongside the EMA values; window
+      // 2 stays above, so it carries no signal.
+      assertEquals(points(0)("signal").str, "BUY")
+      assertEquals(points(1)("signal"), ujson.Null)
     }
 
   test("symbol registry emits each symbol exactly once"):

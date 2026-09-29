@@ -55,11 +55,14 @@ object StreamsApp:
     obj("ema100") = emaSlow
     obj.render()
 
+  /** EMA recurrence from the assignment (Sec. 3.2). The first window of a
+    * symbol has `previous == 0` (EMA_{s,w0} = 0), so it is *not* seeded with the
+    * close: EMA38 = 2c/39 > EMA100 = 2c/101, which is why every symbol emits a
+    * BUY on its first closed window under the literal definition.
+    */
   def calculateEma(previous: Double, current: Double, period: Int): Double =
-    if previous == 0.0 then current
-    else
-      val alpha = 2.0 / (period + 1.0)
-      alpha * current + (1.0 - alpha) * previous
+    val alpha = 2.0 / (period + 1.0)
+    alpha * current + (1.0 - alpha) * previous
 
   def detectSignal(
       previousFast: Double,
@@ -354,6 +357,10 @@ object StreamsApp:
     val queryPort = sys.env.getOrElse("STREAMS_QUERY_PORT", "7070").toInt
     val retentionDays = sys.env.getOrElse("EMA_HISTORY_RETENTION_DAYS", "8").toLong
     val standbys = sys.env.getOrElse("STREAMS_STANDBY_REPLICAS", "0").toInt
+    // DEBUG adds state-store put/get/flush latencies and RocksDB metrics (bytes
+    // written, memtable flush time, write stalls), which the perf harness scrapes
+    // over JMX. INFO is the Kafka default and cheaper.
+    val metricsLevel = sys.env.getOrElse("STREAMS_METRICS_LEVEL", "INFO").toUpperCase
     // Kafka Streams takes an exclusive lock on its state directory, so replicas
     // sharing one volume must not share a path. Keying the directory on the
     // container hostname lets `--scale streams=N` work against a single volume;
@@ -384,6 +391,7 @@ object StreamsApp:
     props.put(StreamsConfig.DEFAULT_TIMESTAMP_EXTRACTOR_CLASS_CONFIG, classOf[EventTimeExtractor].getName)
     props.put(StreamsConfig.APPLICATION_SERVER_CONFIG, advertisedHost)
     props.put(StreamsConfig.NUM_STANDBY_REPLICAS_CONFIG, Integer.valueOf(standbys))
+    props.put(StreamsConfig.METRICS_RECORDING_LEVEL_CONFIG, metricsLevel)
     stateDir.foreach(dir => props.put(StreamsConfig.STATE_DIR_CONFIG, dir))
 
     val topology =

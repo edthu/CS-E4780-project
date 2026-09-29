@@ -13,8 +13,9 @@ class StreamsAppSuite extends munit.FunSuite:
     assertEquals(obj("ema100").num, 123.0)
 
   test("calculateEma uses the EMA smoothing formula"):
+    // EMA_{s,w0} = 0: the first window is weighted against zero, not seeded.
     val first = StreamsApp.calculateEma(0.0, 100.0, 38)
-    assertEquals(first, 100.0)
+    assert(Math.abs(first - 100.0 * 2.0 / 39.0) < 1e-12)
 
     val next = StreamsApp.calculateEma(100.0, 110.0, 38)
     val alpha = 2.0 / (38.0 + 1.0)

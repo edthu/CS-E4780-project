@@ -19,6 +19,10 @@ import scala.jdk.CollectionConverters.*
   *   - CSV inputs: one or more files, or a directory containing daily CSVs.
   *   - NDJSON input: read line by line; `-` reads stdin.
   *   - `--follow` retains the previous append-follow mode for NDJSON files.
+  *
+  * Throughput is logged every `PRODUCER_SUMMARY_INTERVAL_MS` (default 2000) as
+  * records/second over the last interval and since start, mirroring
+  * `ConsumerApp`'s summary line.
   */
 object ProducerApp:
   private val defaultInput = "data"
@@ -35,6 +39,11 @@ object ProducerApp:
       .flatMap(v => scala.util.Try(v.toLong).toOption)
       .filter(_ > 0)
       .getOrElse(1000L)
+    val summaryIntervalMs = sys.env
+      .get("PRODUCER_SUMMARY_INTERVAL_MS")
+      .flatMap(v => scala.util.Try(v.toLong).toOption)
+      .filter(_ > 0)
+      .getOrElse(2000L)
     val bootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP", "localhost:9092")
     val topic = sys.env.getOrElse("KAFKA_TOPIC", "trading-events")
 
@@ -55,12 +64,31 @@ object ProducerApp:
     var skippedNonPrice = 0L
     var rejected = 0L
     val pacer = new ReplayPacer(options.speed)
+    val startedAt = System.nanoTime()
+    var lastSummaryAt = startedAt
+    var lastSummaryCount = 0L
+
+    def rate(delta: Long, nanos: Long): Double =
+      if nanos <= 0 then 0.0 else delta * 1e9 / nanos
+
+    // Called per record and after every drain, so it also fires while follow
+    // mode is idle; silent when nothing new was sent.
+    def maybeSummary(): Unit =
+      val now = System.nanoTime()
+      if now - lastSummaryAt >= summaryIntervalMs * 1000000L && sent > lastSummaryCount then
+        val intervalRps = rate(sent - lastSummaryCount, now - lastSummaryAt)
+        val avgRps = rate(sent, now - startedAt)
+        println(
+          f"[producer] sent=$sent recordsPerSecond=$intervalRps%.1f avgRecordsPerSecond=$avgRps%.1f"
+        )
+        lastSummaryAt = now
+        lastSummaryCount = sent
 
     def sendEvent(event: Event, raw: String): Unit =
       pacer.await(event.timestamp)
       producer.send(new ProducerRecord[String, String](topic, event.symbol, raw))
       sent += 1
-      if sent % 100000 == 0 then println(s"[producer] sent=$sent")
+      maybeSummary()
 
     def sendLine(line: String): Unit =
       try
@@ -79,6 +107,7 @@ object ProducerApp:
         if line.trim.nonEmpty then sendLine(line)
         line = reader.readLine()
       producer.flush()
+      maybeSummary()
 
     try
       if stdin then
@@ -126,7 +155,11 @@ object ProducerApp:
     finally
       producer.flush()
       producer.close()
-    println(s"[producer] completed sent=$sent skipped=$skipped skippedNonPrice=$skippedNonPrice rejected=$rejected")
+    val avgRps = rate(sent, System.nanoTime() - startedAt)
+    println(
+      f"[producer] completed sent=$sent skipped=$skipped skippedNonPrice=$skippedNonPrice " +
+        f"rejected=$rejected avgRecordsPerSecond=$avgRps%.1f"
+    )
 
   def orderCsvFiles(paths: Seq[Path]): Vector[Path] =
     paths.toVector.sortBy(firstValidEventTimestamp)
