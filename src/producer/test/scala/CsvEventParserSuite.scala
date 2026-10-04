@@ -14,7 +14,7 @@ class CsvEventParserSuite extends munit.FunSuite:
       ParseResult.Accepted(Event("AAPL.ETR", "E", 123.45, "2021-11-08T01:01:07.000"))
     )
 
-  test("rejects rows with a missing required field"):
+  test("skips rows with a missing Last value"):
     val result = CsvEventParser.parse(2, CsvEventParser.normalizeHeaders(validRow - "Last"))
     assertEquals(result, ParseResult.Skipped(SkippedRow(2, "non-price event: missing last")))
 

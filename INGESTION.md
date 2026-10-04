@@ -1,6 +1,9 @@
-## Streaming ingestion prototype
+## CSV ingestion and replay
 
-This prototype reads the DEBS 2022 trading CSV incrementally, maps rows with all required fields to events, and writes newline-delimited JSON. Invalid rows are dropped and counted to avoid producing a multi-gigabyte diagnostic file. The parser uses bounded memory and does not include Kafka yet; the NDJSON output is the local handoff boundary for a future Kafka sink.
+The Kafka producer reads daily CSV files incrementally, maps valid price rows to
+events, and publishes them directly to `trading-events`. It does not create an
+intermediate NDJSON file. Parsing lives in the shared `common` module and is
+covered by producer tests.
 
 The source mapping is:
 
@@ -9,50 +12,27 @@ The source mapping is:
 - `Last` -> `price`
 - `Trading date` + `Trading time` -> ISO-8601 `timestamp`
 
-The parser emits only `Last` price events. Rows without a `Last` value are expected non-price events and are counted as skipped, not treated as malformed. Invalid relevant rows are dropped and counted as rejected. Prices must be finite and greater than zero. The parser ignores the other source columns and processes the CSV incrementally, so the full 5 GB file is not loaded into memory.
+Only rows with a valid `Last` price are published. Rows without `Last` are
+counted as expected non-price rows; malformed relevant rows are counted as
+rejected. Prices must be finite and greater than zero. Parsing and publishing
+are incremental, so memory use does not grow with the CSV size.
 
-### Test run
+The producer accepts one or more CSV paths or a directory. For a directory it
+discovers top-level `*.csv` files and orders them by the first valid event
+timestamp in each file. Rows within each file retain source order, so files
+should be internally chronological and cover non-overlapping days for a
+globally chronological replay.
 
-Tests create small temporary CSV fixtures and do not require the real dataset:
+Replay pacing follows event timestamp deltas in the `Europe/Amsterdam` time
+zone. The default is unpaced maximum throughput (`--speed 0`). For paced replay,
+timing is scheduled against the first event so processing overhead does not
+accumulate as drift. Use `--speed 1` for real-time playback. In Compose, set
+`REPLAY_SPEED` before starting the producer.
 
-```sh
-sbt test
-```
-
-### Real-data run
-
-Download the full source file outside Docker. The script resumes an interrupted `.part` file and skips a completed existing file:
-
-```sh
-./scripts/download-data.sh
-sbt assembly
-docker compose up --build
-```
-
-The real-data Compose command reads:
-
-`data/debs2022-gc-trading-day-08-11-21.csv`
-
-Results are written to `output/events.ndjson`. The application reports total rows, accepted events, skipped non-price rows, rejected rows, elapsed time, and input rows per second.
-
-### Progress logs
-
-When running the real-data container, progress is printed at startup, every one million input rows, and completion:
-
-```text
-[ingestion] starting input=... size=4.40 GiB progressIntervalRows=1000000
-[ingestion] progress rows=1000000 accepted=... skippedNonPrice=... rejected=... elapsedMillis=... rowsPerSecond=...
-[ingestion] completed elapsedMillis=...
-```
-
-Change the checkpoint interval in `docker-compose.yml`, or override it for a one-off run:
+To download the sample source data and start the full app, see the run
+instructions in [README.md](README.md). To run only the producer locally, start
+Kafka first and then use:
 
 ```sh
-INGESTION_PROGRESS_INTERVAL_ROWS=100000 docker compose up --build
-```
-
-Follow logs from another terminal with:
-
-```sh
-docker compose logs -f ingestion
+sbt "producer/run data"
 ```

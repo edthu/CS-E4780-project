@@ -10,12 +10,10 @@ How events move from the raw CSV through Kafka to the consumer/UI.
 
 ```mermaid
 flowchart LR
-    csv[("DEBS 2022 CSV<br/>(one file per day)")]
-    ndjson[("events.ndjson<br/>(NDJSON, ./output)")]
+    csv[("DEBS 2022 CSVs<br/>(one file per day)")]
 
     subgraph apps["Scala 3 apps (JVM)"]
-        ingestion["ingestion<br/>IngestionApp"]
-        producer["producer<br/>ProducerApp"]
+        producer["producer<br/>CSV replay"]
         streams["streams<br/>StreamsApp<br/>per-tick EMA + 5-min windows<br/>+ QueryService (:7070)"]
         consumer["consumer<br/>ConsumerApp<br/>ALL / SUMMARY logs"]
     end
@@ -30,8 +28,8 @@ flowchart LR
     store[("ema-history<br/>windowed state store<br/>(queryable)")]
     ui["ui<br/>Streamlit :8501<br/>(bonus: Smart Visualization)"]
 
-    csv --> ingestion --> ndjson --> producer
-    producer -->|"key=symbol<br/>value=raw NDJSON line"| traw
+    csv -->|"timestamp-ordered files<br/>event-time replay"| producer
+    producer -->|"key=symbol<br/>value=normalized event JSON"| traw
     traw --> streams
     streams -->|"adds ema38 / ema100 per tick"| tproc
     streams -->|"one record per crossover"| tadv
@@ -44,7 +42,7 @@ flowchart LR
 
     classDef store fill:#f4f4f4,stroke:#999;
     classDef topic fill:#e8f0fe,stroke:#4285f4;
-    class csv,ndjson,store store;
+    class csv,store store;
     class traw,tproc,tadv,tsym topic;
 ```
 
@@ -60,18 +58,16 @@ flowchart TB
         kafka["kafka<br/>apache/kafka:3.8.1<br/>INTERNAL :19092 / EXTERNAL :9092"]
 
         initS["kafka-init<br/>(one-shot, creates topics)"]
-        ingestionS["ingestion<br/>(batch, run --rm)"]
-        producerS["producer<br/>(batch, run --rm)"]
+        producerS["producer<br/>(CSV replay, batch)"]
         streamsS["streams x N<br/>(long-running, expose :7070)"]
         consumerS["consumer<br/>(long-running)"]
         uiS["ui<br/>Streamlit, ports 8501:8501"]
     end
 
-    outvol[("./output volume")]
+    dataVol[("./data volume<br/>daily CSV files")]
     statevol[("streams-state volume<br/>one subdir per replica")]
 
-    ingestionS -->|writes| outvol
-    outvol -->|reads| producerS
+    producerS -->|reads daily CSVs| dataVol
     streamsS --- statevol
 
     initS -->|"creates topics,<br/>symbols = compacted"| kafka
@@ -86,7 +82,7 @@ flowchart TB
     host -.-> uiS
 
     classDef svc fill:#e8f0fe,stroke:#4285f4;
-    class kafka,initS,ingestionS,producerS,streamsS,consumerS,uiS svc;
+    class kafka,initS,producerS,streamsS,consumerS,uiS svc;
 ```
 
 ## Build flow (source → running container)
@@ -113,20 +109,17 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    common["common<br/>Event, EventJson<br/>(ujson)"]
-    ingestion["ingestion<br/>(commons-csv, ujson)"]
+    common["common<br/>Event, EventJson, CsvEventParser<br/>(ujson, commons-csv)"]
     producer["producer<br/>(kafka-clients)"]
     consumer["consumer<br/>(kafka-clients)"]
     streams["streams<br/>(kafka-streams)<br/>StreamsApp + QueryService"]
     root["root (aggregate)"]
 
-    ingestion --> common
     producer --> common
     consumer --> common
     streams --> common
 
     root -.aggregates.-> common
-    root -.aggregates.-> ingestion
     root -.aggregates.-> producer
     root -.aggregates.-> consumer
     root -.aggregates.-> streams

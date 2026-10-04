@@ -40,33 +40,19 @@ services:
       kafka:
         condition: service_healthy
 
-  ingestion:
-    build:
-      context: .
-      args:
-        MODULE: ingestion
-        MAIN_CLASS: IngestionApp
-    command: ["/data/debs2022-gc-trading-day-08-11-21.csv", "/output/events.ndjson"]
-    environment:
-      INGESTION_PROGRESS_INTERVAL_ROWS: "1000000"
-    volumes:
-      - ./data:/data:ro
-      - ./output:/output
-
   producer:
     build:
       context: .
       args:
         MODULE: producer
         MAIN_CLASS: ProducerApp
-    command: ["/output/events.ndjson"]
+    command: ["/data", "--speed", "${REPLAY_SPEED:-0}"]
     restart: on-failure
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events
-      PRODUCER_FOLLOW: "true"
     volumes:
-      - ./output:/output:ro
+      - ./data:/data:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -125,7 +111,7 @@ services:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events-processed
       KAFKA_GROUP: trading-consumer
-      CONSUMER_LOG_LEVEL: ALL
+      CONSUMER_LOG_LEVEL: ${CONSUMER_LOG_LEVEL:-SUMMARY}
     depends_on:
       kafka:
         condition: service_healthy

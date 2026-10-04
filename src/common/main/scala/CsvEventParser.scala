@@ -1,6 +1,9 @@
+import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
 import java.time.format.{DateTimeFormatter, DateTimeFormatterBuilder}
 import java.time.temporal.ChronoField
+import org.apache.commons.csv.{CSVFormat, CSVParser}
+import scala.jdk.CollectionConverters.*
 import scala.util.Try
 
 final case class RejectedRow(rowNumber: Long, reason: String)
@@ -23,6 +26,12 @@ object CsvEventParser:
     .appendPattern("yyyy-MM-dd'T'HH:mm:ss")
     .appendFraction(ChronoField.NANO_OF_SECOND, 3, 9, true)
     .toFormatter()
+
+  def csvFormat: CSVFormat = CSVFormat.DEFAULT.builder()
+    .setCommentMarker('#')
+    .setHeader()
+    .setSkipHeaderRecord(true)
+    .build()
 
   def parse(rowNumber: Long, row: Map[String, String]): ParseResult =
     required(row, "id", rowNumber) match
@@ -47,6 +56,9 @@ object CsvEventParser:
 
   def normalizeHeaders(row: Map[String, String]): Map[String, String] =
     row.map { case (key, value) => normalizeHeader(key) -> value }
+
+  def readRecord(record: org.apache.commons.csv.CSVRecord): ParseResult =
+    parse(record.getRecordNumber, normalizeHeaders(record.toMap.asScala.toMap))
 
   private def normalizeHeader(value: String): String =
     value.trim.toLowerCase

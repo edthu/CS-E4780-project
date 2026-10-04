@@ -1,8 +1,4 @@
-/** JSON codec shared by the ingestion, producer, consumer and streams modules.
-  *
-  * `render` mirrors the object built in `IngestionApp.ingest`, so producer
-  * output stays byte-compatible with the ingestion NDJSON handoff.
-  */
+/** JSON codec shared by the producer, consumer and streams modules. */
 object EventJson:
   def render(event: Event): String =
     ujson.Obj(

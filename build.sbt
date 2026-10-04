@@ -28,8 +28,7 @@ lazy val commonSettings = Seq(
   Compile / run / fork := true,
   Compile / run / connectInput := true,
   // Each module's base is src/<module>, so the forked run would otherwise use
-  // that as its working dir. Anchor it to the repo root so relative paths like
-  // `output/events.ndjson` resolve from where you launch sbt.
+  // that as its working dir. Anchor it to the repo root for predictable paths.
   Compile / run / baseDirectory := (ThisBuild / baseDirectory).value,
   Test / fork := true
 )
@@ -44,19 +43,9 @@ lazy val common = project
   .settings(commonSettings)
   .settings(
     name := "common",
-    libraryDependencies += "com.lihaoyi" %% "ujson" % ujsonVersion
-  )
-
-lazy val ingestion = project
-  .in(file("src/ingestion"))
-  .dependsOn(common)
-  .settings(commonSettings, assemblySettings)
-  .settings(
-    name := "ingestion",
     libraryDependencies ++= Seq(
-      "org.apache.commons" % "commons-csv" % commonsCsvVersion,
       "com.lihaoyi" %% "ujson" % ujsonVersion,
-      "org.scalameta" %% "munit" % munitVersion % Test
+      "org.apache.commons" % "commons-csv" % commonsCsvVersion
     )
   )
 
@@ -68,7 +57,6 @@ lazy val producer = project
     name := "producer",
     libraryDependencies ++= Seq(
       "org.apache.kafka" % "kafka-clients" % kafkaVersion,
-      "com.lihaoyi" %% "ujson" % ujsonVersion,
       slf4jNop,
       "org.scalameta" %% "munit" % munitVersion % Test
     )
@@ -104,5 +92,5 @@ lazy val streams = project
 
 lazy val root = project
   .in(file("."))
-  .aggregate(common, ingestion, producer, consumer, streams)
+  .aggregate(common, producer, consumer, streams)
   .settings(name := "cs-e4780")

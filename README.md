@@ -11,32 +11,62 @@ See the Mermaid diagrams and the motivation behind each architectural choice in
 
 ### With Docker Compose (recommended)
 
-Everything runs as containers on one Compose network. The JVM app images copy in
-the fat jars, so build the jars first — the images never compile.
+The live pipeline reads CSV files directly in the producer; there is no separate
+ingestion run or NDJSON handoff step. The consumer remains a separate downstream
+service, and Compose starts it together with Kafka, Streams, and the UI.
 
 ```bash
-# 1. Build the app jars (the Docker images COPY these in)
-sbt ingestion/assembly producer/assembly consumer/assembly streams/assembly
+# Download the sample day (large file); add any other daily CSVs under data/.
+./scripts/download-data.sh
 
-# 2. Start the broker, topic init, the stream processor, the consumer and the UI
+# Build app jars and start the whole pipeline.
+./scripts/run-pipeline.sh
+
+# Open the UI at http://localhost:8501. Follow service logs with:
+docker compose logs -f producer streams consumer
+```
+
+The producer discovers top-level `*.csv` files in `data/`, orders them by the
+first valid event timestamp in each file, and publishes directly to Kafka. Rows
+inside each file retain their source order. The default replay is unpaced and
+runs at maximum throughput. Set another speed before starting the pipeline to
+pace events against their source timestamps:
+
+```bash
+REPLAY_SPEED=1 ./scripts/run-pipeline.sh  # real-time event-time pacing
+```
+
+Consumer summary logging is the default so a large replay does not print every
+event. For a small sample, `CONSUMER_LOG_LEVEL=ALL ./scripts/run-pipeline.sh`
+prints each processed record. Stop the services with `docker compose down`.
+
+### Manual step-by-step startup
+
+The launcher above performs these steps for convenience. To start each part
+separately, first make sure CSV files are in `data/` (the download script gets
+the sample day), then:
+
+```bash
+# Build the app jars copied into the Docker images.
+sbt -batch producer/assembly streams/assembly consumer/assembly
+
+# Start Kafka, create topics, and start the downstream applications.
 docker compose up -d --build kafka kafka-init streams consumer ui
 
-# 3. Generate NDJSON into ./output (needs the DEBS CSV in ./data — see
-#    scripts/download-data.sh). Skip if ./output/events.ndjson already exists.
-docker compose run --rm ingestion
+# Start the CSV replay producer (unpaced by default). Set REPLAY_SPEED=1 for
+# real-time playback.
+docker compose up -d --build producer
 
-# 4. Publish the NDJSON to the trading-events topic
-docker compose up -d producer
-
-# 5. Open the UI
-open http://localhost:8501
-
-# Watch the processed output instead
-docker compose logs -f consumer
-
-# Reset events with
-./scripts/reset-topics.sh
+# Follow logs and open the UI.
+docker compose logs -f producer streams consumer
 ```
+
+The producer can also be started before the other app services; Compose will
+start its Kafka and topic-initialization dependencies. The consumer itself only
+reads processed Kafka events and does not trigger CSV ingestion.
+
+See [INGESTION.md](INGESTION.md) for CSV field mapping, event validation, and
+replay ordering and pacing details.
 
 `kafka-init` creates the topics with 6 partitions and makes `symbols`
 log-compacted; auto-creation can do neither. Inside the Compose network the apps
