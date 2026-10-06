@@ -1,7 +1,9 @@
 """Streamlit front end for the trading-trends pipeline.
 
 Layout follows ai_docs/ui_sketch.png: a search box and a scrollable symbol list
-on the left, the EMA chart on the right.
+on the left, the EMA chart on the right. Under the chart, two tables list the
+selected symbol's crossover events and every per-window EMA calculation; both
+are derived from the same history points the chart draws.
 
 Two very different data paths, deliberately:
 
@@ -22,6 +24,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
@@ -35,6 +38,8 @@ SYMBOL_CACHE_TTL = int(os.getenv("SYMBOL_CACHE_TTL", "60"))
 REGISTRY_READ_BUDGET_S = float(os.getenv("REGISTRY_READ_BUDGET_SECONDS", "15"))
 MAX_POINTS = int(os.getenv("UI_MAX_POINTS", "1000"))
 MAX_LISTED_SYMBOLS = int(os.getenv("UI_MAX_LISTED_SYMBOLS", "200"))
+TABLE_HEIGHT = 320
+SIGNAL_COLOURS = {"BUY": "#3ddc84", "SELL": "#ff5252"}
 
 st.set_page_config(page_title="Trading trends", layout="wide", page_icon="📈")
 
@@ -123,8 +128,12 @@ def fetch_points(symbol: str) -> list[dict]:
     return response.json().get("points", [])
 
 
+def _to_time(ms: float) -> datetime:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+
+
 def build_figure(symbol: str, points: list[dict]) -> go.Figure:
-    times = [datetime.fromtimestamp(p["windowStart"] / 1000, tz=timezone.utc) for p in points]
+    times = [_to_time(p["windowStart"]) for p in points]
 
     figure = go.Figure()
     figure.add_trace(
@@ -179,6 +188,49 @@ def build_figure(symbol: str, points: list[dict]) -> go.Figure:
     return figure
 
 
+def points_frame(points: list[dict]) -> pd.DataFrame:
+    """History points as a table, newest window first."""
+    return pd.DataFrame(
+        {
+            "Window start": [_to_time(p["windowStart"]) for p in points],
+            "Window end": [_to_time(p["windowEnd"]) for p in points],
+            "Signal": [p.get("signal") or "" for p in points],
+            "Close": [p["close"] for p in points],
+            "EMA 38": [p["ema38"] for p in points],
+            "EMA 100": [p["ema100"] for p in points],
+        }
+    ).iloc[::-1]
+
+
+def style_signals(frame: pd.DataFrame) -> "pd.io.formats.style.Styler":
+    return frame.style.format(
+        {"Close": "{:.4f}", "EMA 38": "{:.4f}", "EMA 100": "{:.4f}",
+         "Window start": "{:%Y-%m-%d %H:%M}", "Window end": "{:%Y-%m-%d %H:%M}"}
+    ).map(
+        lambda s: f"color: {SIGNAL_COLOURS[s]}; font-weight: bold" if s in SIGNAL_COLOURS else "",
+        subset=["Signal"],
+    )
+
+
+def render_tables(points: list[dict]) -> None:
+    frame = points_frame(points)
+    crossovers_column, ema_column = st.columns(2, gap="medium")
+
+    with crossovers_column:
+        st.subheader("Crossover events")
+        crossovers = frame[frame["Signal"] != ""].drop(columns=["Window end"])
+        if crossovers.empty:
+            st.caption("No crossovers yet.")
+        else:
+            st.dataframe(style_signals(crossovers), height=TABLE_HEIGHT,
+                         hide_index=True, use_container_width=True)
+
+    with ema_column:
+        st.subheader("EMA calculations")
+        st.dataframe(style_signals(frame), height=TABLE_HEIGHT,
+                     hide_index=True, use_container_width=True)
+
+
 @st.fragment(run_every=UI_REFRESH_SECONDS)
 def render_chart() -> None:
     """Re-runs on its own timer, so the chart refreshes without re-reading Kafka
@@ -209,6 +261,8 @@ def render_chart() -> None:
     left.metric("EMA 38", f"{latest['ema38']:.4f}")
     middle.metric("EMA 100", f"{latest['ema100']:.4f}")
     right.metric("Advisories in view", len(advisories))
+
+    render_tables(points)
 
 
 # --------------------------------------------------------------------------

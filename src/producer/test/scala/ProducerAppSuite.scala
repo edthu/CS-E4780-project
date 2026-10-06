@@ -14,6 +14,13 @@ class ProducerAppSuite extends munit.FunSuite:
 
     assertEquals(ProducerApp.orderCsvFiles(Seq(later, earlier)), Vector(earlier, later))
 
+  test("skips CSV files without valid price events instead of failing"):
+    val directory = Files.createTempDirectory("producer-skip-test")
+    val trading = csv(directory.resolve("day-01.csv"), "08-11-2021", "09:00:00.000")
+    val weekend = Files.writeString(directory.resolve("day-07.csv"), header + "AAA,E,,,\n", StandardCharsets.UTF_8)
+
+    assertEquals(ProducerApp.orderCsvFiles(Seq(weekend, trading)), Vector(trading))
+
   test("timestamp pacing scales elapsed event time and permits unpaced replay"):
     val start = "2021-11-08T09:00:00.000"
     val tenSecondsLater = "2021-11-08T09:00:10.000"

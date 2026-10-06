@@ -161,8 +161,16 @@ object ProducerApp:
         f"rejected=$rejected avgRecordsPerSecond=$avgRps%.1f"
     )
 
+  // Files without any price events (e.g. weekend days) contribute nothing, so they are skipped.
   def orderCsvFiles(paths: Seq[Path]): Vector[Path] =
-    paths.toVector.sortBy(firstValidEventTimestamp)
+    paths.toVector
+      .flatMap { path =>
+        val first = firstValidEventTimestamp(path)
+        if first.isEmpty then System.err.println(s"[producer] skipping CSV with no valid price events: $path")
+        first.map(path -> _)
+      }
+      .sortBy(_._2)
+      .map(_._1)
 
   private def discoverInputs(inputs: Seq[Path]): Vector[Path] =
     inputs.toVector.flatMap { path =>
@@ -177,7 +185,7 @@ object ProducerApp:
   private def isCsv(path: Path): Boolean =
     path.getFileName.toString.toLowerCase.endsWith(".csv")
 
-  private def firstValidEventTimestamp(path: Path): Long =
+  private def firstValidEventTimestamp(path: Path): Option[Long] =
     val parser = CSVParser.parse(path, StandardCharsets.UTF_8, CsvEventParser.csvFormat)
     try
       val records = parser.iterator().asScala
@@ -186,7 +194,7 @@ object ProducerApp:
         CsvEventParser.readRecord(records.next()) match
           case ParseResult.Accepted(event) => timestamp = Some(ReplayPacer.epochMillis(event.timestamp))
           case _ => ()
-      timestamp.getOrElse(throw new IllegalArgumentException(s"CSV has no valid price events: $path"))
+      timestamp
     finally parser.close()
 
   private def parseOptions(args: Array[String]): Options =
