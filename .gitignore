@@ -1,6 +1,9 @@
 local/*
 target/
 project/target/
+project/.bloop/
+project/project/
+project/metals.sbt
 data/*.csv
 data/*.part
 output/

@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tick Data Load Profile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; charts span it full width, stat strip on top, symbol drill-down below. */
+:root {
+  --bg: #f6f7f8; --surface: #fcfcfb; --ink: #101418; --ink-2: #4c535b; --muted: #858b92;
+  --grid: #e2e4e6; --axis: #c4c8cc; --ring: rgba(16,20,24,.10);
+  --events: #2a78d6; --events-wash: rgba(42,120,214,.12);
+  --price: #eb6834; --price-wash: rgba(235,104,52,.12);
+  --hover: rgba(16,20,24,.05);
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1113; --surface: #181a1c; --ink: #f3f4f5; --ink-2: #c0c5ca; --muted: #8a9096;
+  --grid: #2a2d30; --axis: #3a3e42; --ring: rgba(255,255,255,.10);
+  --events: #3987e5; --events-wash: rgba(57,135,229,.16);
+  --price: #d95926; --price-wash: rgba(217,89,38,.16);
+  --hover: rgba(255,255,255,.06); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1113; --surface: #181a1c; --ink: #f3f4f5; --ink-2: #c0c5ca; --muted: #8a9096;
+  --grid: #2a2d30; --axis: #3a3e42; --ring: rgba(255,255,255,.10);
+  --events: #3987e5; --events-wash: rgba(57,135,229,.16);
+  --price: #d95926; --price-wash: rgba(217,89,38,.16);
+  --hover: rgba(255,255,255,.06); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.5 var(--f-body); }
+main { max-width: 1120px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 64px; display: grid; gap: 44px; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: .005em; }
+h1 { font-size: 2.1rem; line-height: 1.1; }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.05rem; font-weight: 500; }
+p { margin: 0; max-width: 68ch; color: var(--ink-2); }
+.eyebrow { font: 500 .75rem/1 var(--f-data); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+header { display: grid; gap: 12px; }
+section { display: grid; gap: 16px; min-width: 0; }
+.sec-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; }
+.sec-head > div:first-child { display: grid; gap: 6px; min-width: 0; }
+code, .mono { font-family: var(--f-data); font-size: .88em; }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; background: var(--grid); border: 1px solid var(--grid); border-radius: 8px; overflow: hidden; }
+.stat { background: var(--surface); padding: 16px 18px; display: grid; gap: 4px; align-content: start; }
+.stat .label { font-size: .85rem; color: var(--ink-2); }
+.stat .value { font: 600 1.7rem/1.15 var(--f-display); }
+.stat .sub { font: .78rem/1.35 var(--f-data); color: var(--muted); }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+
+.panel { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 16px 16px 10px; min-width: 0; position: relative; }
+.panel + .panel { margin-top: 0; }
+.chart-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 4px; }
+.chart-title .name { font-weight: 600; font-size: .95rem; }
+.chart-title .readout { font: .8rem var(--f-data); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+svg { display: block; width: 100%; overflow: visible; }
+svg text { fill: var(--muted); font: 11px var(--f-data); font-variant-numeric: tabular-nums; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.baseline { stroke: var(--axis); stroke-width: 1; }
+.crosshair { stroke: var(--ink-2); stroke-width: 1; opacity: .5; pointer-events: none; }
+.annot { fill: var(--ink-2); font-weight: 500; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 .82rem/1 var(--f-body); padding: 7px 11px; border-radius: 6px; border: 1px solid var(--ring); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.chip:hover { background: var(--hover); color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.chip:focus-visible, .bar-row:focus-visible { outline: 2px solid var(--events); outline-offset: 2px; }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+th { text-align: left; font: 500 .72rem var(--f-data); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--axis); white-space: nowrap; }
+td { padding: 6px 10px; border-bottom: 1px solid var(--grid); font-family: var(--f-data); font-size: .82rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.num, th.num { text-align: right; }
+td .rel { display: inline-block; height: 6px; border-radius: 0 3px 3px 0; vertical-align: middle; margin-left: 8px; }
+
+.bars { display: grid; gap: 2px; }
+.bar-row { display: grid; grid-template-columns: minmax(92px, 130px) 1fr minmax(70px, auto); gap: 10px; align-items: center; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.bar-row:hover { background: var(--hover); }
+.bar-row[aria-selected="true"] { background: var(--hover); box-shadow: inset 2px 0 0 var(--ink); }
+.bar-row .sym { font: 500 .82rem var(--f-data); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-row .sym small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.bar-row .track { height: 14px; position: relative; }
+.bar-row .fill { height: 100%; border-radius: 0 4px 4px 0; }
+.bar-row .val { font: .8rem var(--f-data); text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.heat-wrap { overflow-x: auto; }
+canvas { display: block; }
+.legend-ramp { display: flex; align-items: center; gap: 8px; font: .75rem var(--f-data); color: var(--muted); }
+.legend-ramp span.r { width: 140px; height: 8px; border-radius: 2px; }
+.tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--ring); box-shadow: 0 4px 16px rgba(0,0,0,.12); border-radius: 6px; padding: 8px 10px; font: .78rem/1.4 var(--f-data); z-index: 10; font-variant-numeric: tabular-nums; }
+.note { font-size: .85rem; color: var(--muted); }
+footer p { font-size: .85rem; color: var(--muted); }
+@media (max-width: 560px) { h1 { font-size: 1.7rem; } .bar-row { grid-template-columns: 88px 1fr 64px; gap: 6px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">CS-E4780 · DEBS 2022 trading data · 8–14 Nov 2021</div>
+    <h1>When the tick stream peaks</h1>
+    <p id="intro"></p>
+  </header>
+
+  <div class="stats" id="stats"></div>
+
+  <section id="week">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">Whole market</div>
+        <h2>Events per minute across the week</h2>
+      </div>
+      <div class="chips" id="range-chips" role="group" aria-label="Time range"></div>
+    </div>
+    <div class="panel">
+      <div class="chart-title"><span class="name"><span class="swatch" style="background:var(--events)"></span>All events / min</span><span class="readout" id="ro-e"></span></div>
+      <svg id="ch-e" height="190" aria-label="All events per minute"></svg>
+    </div>
+    <div class="panel">
+      <div class="chart-title"><span class="name"><span class="swatch" style="background:var(--price)"></span>Price events (Last &gt; 0) / min</span><span class="readout" id="ro-p"></span></div>
+      <svg id="ch-p" height="190" aria-label="Price events per minute"></svg>
+    </div>
+    <p class="note">Bucketed by system receive time (<code>Date</code> + <code>Time</code>). The two measures have very different scales, so they get separate axes in separate charts. Hover to read a minute; both charts follow the same cursor.</p>
+  </section>
+
+  <section id="day">
+    <div class="sec-head"><div>
+      <div class="eyebrow">Weekday shape</div>
+      <h2>An average trading day, minute by minute</h2>
+      <p>Mean over Monday–Friday for each minute of the day. Spikes that recur at the same clock time every day show up here; one-off bursts get averaged away.</p>
+    </div></div>
+    <div class="two">
+      <div class="panel">
+        <div class="chart-title"><span class="name"><span class="swatch" style="background:var(--events)"></span>All events / min</span><span class="readout" id="ro-de"></span></div>
+        <svg id="ch-de" height="170"></svg>
+      </div>
+      <div class="panel">
+        <div class="chart-title"><span class="name"><span class="swatch" style="background:var(--price)"></span>Price events / min</span><span class="readout" id="ro-dp"></span></div>
+        <svg id="ch-dp" height="170"></svg>
+      </div>
+    </div>
+  </section>
+
+  <section id="peaks">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">Peak moments</div>
+        <h2>The busiest minutes and seconds</h2>
+      </div>
+      <div class="chips" id="peak-chips" role="group" aria-label="Rank peaks by"></div>
+    </div>
+    <div class="two">
+      <div class="panel table-wrap"><h3>Top minutes</h3><table id="t-min"></table></div>
+      <div class="panel table-wrap"><h3>Top seconds</h3><table id="t-sec"></table></div>
+    </div>
+    <p class="note" id="pct-note"></p>
+  </section>
+
+  <section id="symbols">
+    <div class="sec-head">
+      <div>
+        <div class="eyebrow">Per symbol</div>
+        <h2>Which symbols carry the load, and when</h2>
+        <p id="conc-note"></p>
+      </div>
+      <div class="chips" id="sym-chips" role="group" aria-label="Symbol metric"></div>
+    </div>
+    <div class="panel">
+      <div class="chart-title"><span class="name" id="bars-title"></span><span class="readout">select a row to see its timeline</span></div>
+      <div class="bars" id="bars" role="listbox" aria-label="Top symbols"></div>
+    </div>
+    <div class="panel">
+      <div class="chart-title"><span class="name" id="sym-title"></span><span class="readout" id="ro-s"></span></div>
+      <svg id="ch-s" height="170"></svg>
+    </div>
+    <div class="panel">
+      <div class="chart-title"><span class="name" id="heat-title"></span>
+        <span class="legend-ramp">low <span class="r" id="ramp"></span> peak of that symbol</span></div>
+      <div class="heat-wrap"><canvas id="heat"></canvas></div>
+      <p class="note" style="margin-top:8px">Each row is scaled to its own maximum, so a dark cell marks that symbol's own peak 15-minute window, regardless of how busy the symbol is overall. Weekdays only, 07:00–19:00; outside that window the data is near-silent.</p>
+    </div>
+  </section>
+
+  <section id="exch">
+    <div class="sec-head"><div>
+      <div class="eyebrow">Breakdown</div>
+      <h2>By exchange and security type</h2>
+    </div></div>
+    <div class="panel table-wrap"><table id="t-ex"></table></div>
+  </section>
+
+  <footer><p>Generated by <code>scripts/profile_dataset.py</code> and <code>scripts/render_profile.py</code>. Rows whose system timestamp could not be parsed are excluded. Times are as recorded in the data set (CET).</p></footer>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const D = /*__DATA__*/null;
+const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const START = Date.UTC(...D.start.split(/[-T:]/).map((v, i) => i === 1 ? +v - 1 : +v));
+const nf = new Intl.NumberFormat("en-US");
+const fmt = v => nf.format(Math.round(v));
+const compact = v => v >= 1e9 ? (v/1e9).toFixed(1)+"B" : v >= 1e6 ? (v/1e6).toFixed(1)+"M" : v >= 1e4 ? (v/1e3).toFixed(1)+"K" : fmt(v);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const tip = document.getElementById("tip");
+
+function labelAt(ms, withSec) {
+  const d = new Date(ms), dow = (d.getUTCDay() + 6) % 7;
+  const p = n => String(n).padStart(2, "0");
+  return `${DAY[dow]} ${d.getUTCDate()} Nov ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}` + (withSec ? ":" + p(d.getUTCSeconds()) : "");
+}
+const isoLabel = (t, withSec) => labelAt(Date.parse(t.replace(" ", "T") + "Z"), withSec);
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = Math.min(x + 14, innerWidth - r.width - 8) + "px";
+  tip.style.top = Math.max(8, y - r.height - 12) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v))), m = v / e;
+  return (m <= 1 ? 1 : m <= 1.5 ? 1.5 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 3 ? 3 : m <= 4 ? 4 : m <= 5 ? 5 : m <= 6 ? 6 : m <= 8 ? 8 : 10) * e;
+}
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); parent && parent.appendChild(n); return n; };
+
+/* Line/area chart over a dense array. xLabel(i) gives tick text; ticks(i0,i1) gives indices. */
+function lineChart(svg, values, o) {
+  const W = svg.clientWidth || 800, H = +svg.getAttribute("height");
+  const M = { l: 52, r: 12, t: o.marks ? 22 : 12, b: 24 };
+  svg.innerHTML = ""; svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const n = values.length, iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let mx = 0, mi = 0; values.forEach((v, i) => { if (v > mx) { mx = v; mi = i; } });
+  const top = niceMax(mx * 1.08);
+  const X = i => M.l + (n <= 1 ? 0 : i / (n - 1) * iw), Y = v => M.t + ih - v / top * ih;
+  for (let k = 0; k <= 4; k++) {
+    const v = top * k / 4, y = Y(v);
+    el("line", { x1: M.l, x2: W - M.r, y1: y, y2: y, class: k ? "gridline" : "baseline" }, svg);
+    el("text", { x: M.l - 8, y: y + 4, "text-anchor": "end" }, svg).textContent = compact(v);
+  }
+  let minGap = 0;
+  for (const i of o.ticks()) {
+    const x = X(i); if (x < minGap) continue;
+    el("line", { x1: x, x2: x, y1: M.t + ih, y2: M.t + ih + 4, class: "baseline" }, svg);
+    el("text", { x, y: H - 6, "text-anchor": "middle" }, svg).textContent = o.xLabel(i);
+    minGap = x + 64;
+  }
+  // Downsample to ~2 points per pixel with min/max so spikes survive.
+  const per = Math.max(1, Math.floor(n / (iw * 2)));
+  let d = "";
+  for (let i = 0; i < n; i += per) {
+    let lo = Infinity, hi = -Infinity, li = i, hiI = i;
+    for (let j = i; j < Math.min(n, i + per); j++) { if (values[j] < lo) { lo = values[j]; li = j; } if (values[j] > hi) { hi = values[j]; hiI = j; } }
+    const pts = li < hiI ? [[li, lo], [hiI, hi]] : [[hiI, hi], [li, lo]];
+    for (const [k, v] of per === 1 ? [[i, values[i]]] : pts) d += (d ? "L" : "M") + X(k).toFixed(1) + " " + Y(v).toFixed(1);
+  }
+  el("path", { d: d + `L${X(n - 1)} ${Y(0)}L${X(0)} ${Y(0)}Z`, fill: `var(${o.wash})`, stroke: "none" }, svg);
+  el("path", { d, fill: "none", stroke: `var(${o.color})`, "stroke-width": 1.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  // Peak marker + label
+  if (mx > 0) {
+    const px = X(mi), py = Y(mx);
+    el("circle", { cx: px, cy: py, r: 4.5, fill: `var(${o.color})`, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    const right = px > M.l + iw * 0.7;
+    el("text", { x: px + (right ? -9 : 9), y: py + 4, "text-anchor": right ? "end" : "start", class: "annot" }, svg).textContent = `peak ${fmt(mx)} · ${o.xFull(mi)}`;
+  }
+  for (const [i, lab, anchor] of o.marks || []) {
+    const x = X(i);
+    el("line", { x1: x, x2: x, y1: M.t, y2: M.t + ih, class: "gridline", "stroke-dasharray": "0" }, svg);
+    el("text", { x: x + (anchor === "end" ? -3 : anchor === "start" ? 3 : 0), y: M.t - 8, "text-anchor": anchor || "middle" }, svg).textContent = lab;
+  }
+  const cross = el("line", { y1: M.t, y2: M.t + ih, class: "crosshair", visibility: "hidden" }, svg);
+  const dot = el("circle", { r: 4, fill: `var(${o.color})`, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: M.l, y: 0, width: iw, height: H, fill: "transparent" }, svg);
+  const api = {
+    show(i) {
+      if (i == null || i < 0 || i >= n) { cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); o.readout && (o.readout.textContent = o.rest || ""); return; }
+      const x = X(i); cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+      dot.setAttribute("cx", x); dot.setAttribute("cy", Y(values[i])); dot.setAttribute("visibility", "visible");
+      o.readout && (o.readout.textContent = `${o.xFull(i)} · ${fmt(values[i])}${o.unit || ""}`);
+    }
+  };
+  o.rest = o.readout ? `max ${fmt(mx)}${o.unit || ""}` : "";
+  o.readout && (o.readout.textContent = o.rest);
+  const idx = ev => { const r = svg.getBoundingClientRect(); const x = (ev.clientX - r.left) * W / r.width; return Math.round((x - M.l) / iw * (n - 1)); };
+  hit.addEventListener("pointermove", ev => (o.onHover || api.show)(idx(ev)));
+  hit.addEventListener("pointerleave", () => (o.onHover || api.show)(null));
+  return api;
+}
+
+/* ---------- intro + stats ---------- */
+const T = D.totals, pm = D.peakMinutes[0], ps = D.peakSeconds[0], ppm = D.peakPriceMinutes[0], pps = D.peakPriceSeconds[0];
+const pct = D.secondPercentiles;
+document.getElementById("intro").textContent =
+  `${compact(T.events)} events from ${fmt(T.symbols)} symbols on the Paris, Amsterdam and Frankfurt exchanges, of which ${compact(T.price_events)} carry a trade price (Last > 0) and reach the EMA pipeline. ` +
+  `The load is anything but flat: almost nothing arrives overnight or at the weekend, and the busiest second carries ${fmt(ps.events)} events.`;
+const stats = [
+  ["All events", compact(T.events), `${compact(T.price_events)} price events (${(100 * T.price_events / T.events).toFixed(1)}%)`],
+  ["Busiest minute", fmt(pm.events), `${isoLabel(pm.t)} · ${fmt(pm.price_events)} price`],
+  ["Busiest second", fmt(ps.events), `${isoLabel(ps.t, true)}`],
+  ["Busiest price second", fmt(pps.price_events), `${isoLabel(pps.t, true)}`],
+  ["p99 events / s, trading hours", fmt(pct.events[2]), `median ${fmt(pct.events[0])} · p99.9 ${fmt(pct.events[3])}`],
+];
+document.getElementById("stats").innerHTML = stats.map(([l, v, s]) => `<div class="stat"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`).join("");
+
+/* ---------- week charts ---------- */
+const MIN = 60000;
+const ranges = [["Week", 0, 7]].concat(DAY.map((d, i) => [d, i, i + 1]));
+let range = [0, 5];
+// Default to the five trading days; weekends are near-empty.
+ranges.splice(1, 0, ["Mon–Fri", 0, 5]);
+function drawWeek() {
+  const i0 = range[0] * 1440, i1 = range[1] * 1440, span = range[1] - range[0];
+  const step = span > 1 ? 1440 : 120;
+  const common = {
+    ticks: () => { const t = []; for (let i = 0; i < i1 - i0; i += step) t.push(i); return t; },
+    xLabel: i => { const s = labelAt(START + (i0 + i) * MIN); return span > 1 ? s.split(" ").slice(0, 2).join(" ") : s.split(" ")[3]; },
+    xFull: i => labelAt(START + (i0 + i) * MIN), unit: "/min",
+  };
+  let a, b;
+  const sync = i => { a.show(i); b.show(i); };
+  a = lineChart(document.getElementById("ch-e"), D.minute.e.slice(i0, i1), { ...common, color: "--events", wash: "--events-wash", readout: document.getElementById("ro-e"), onHover: sync });
+  b = lineChart(document.getElementById("ch-p"), D.minute.p.slice(i0, i1), { ...common, color: "--price", wash: "--price-wash", readout: document.getElementById("ro-p"), onHover: sync });
+}
+const rc = document.getElementById("range-chips");
+ranges.forEach(([lab, a, b]) => {
+  const c = document.createElement("button"); c.className = "chip"; c.textContent = lab; c.id = "rng-" + lab;
+  c.setAttribute("aria-pressed", a === range[0] && b === range[1]);
+  c.onclick = () => { range = [a, b]; rc.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === c)); drawWeek(); };
+  rc.appendChild(c);
+});
+
+/* ---------- day profile ---------- */
+function drawDay() {
+  const t = D.dayProfile.t;
+  const at = hm => t.indexOf(hm);
+  const marks = [[at("09:00"), "open"], [at("15:30"), "US open", "end"], [at("17:35"), "close", "start"]].filter(m => m[0] >= 0);
+  const common = { marks, ticks: () => t.map((s, i) => s.endsWith(":00") && +s.slice(0, 2) % 3 === 0 ? i : -1).filter(i => i >= 0), xLabel: i => t[i], xFull: i => t[i], unit: "/min avg" };
+  const e = lineChart(document.getElementById("ch-de"), D.dayProfile.e, { ...common, color: "--events", wash: "--events-wash", readout: document.getElementById("ro-de") });
+  const p = lineChart(document.getElementById("ch-dp"), D.dayProfile.p, { ...common, color: "--price", wash: "--price-wash", readout: document.getElementById("ro-dp") });
+}
+
+/* ---------- peak tables ---------- */
+let peakBy = "events";
+function drawPeaks() {
+  const byE = peakBy === "events";
+  const rowsM = (byE ? D.peakMinutes : D.peakPriceMinutes).slice(0, 10);
+  const rowsS = (byE ? D.peakSeconds : D.peakPriceSeconds).slice(0, 10);
+  const key = byE ? "events" : "price_events", color = byE ? "var(--events)" : "var(--price)";
+  const tbl = (rows, withSec, extra) => {
+    const max = rows[0][key];
+    return `<tr><th>#</th><th>${withSec ? "Second" : "Minute"}</th><th class="num">Events</th><th class="num">Price events</th>${extra ? '<th class="num">Active symbols</th>' : ""}</tr>` +
+      rows.map((r, i) => `<tr><td>${i + 1}</td><td>${isoLabel(r.t, withSec)}</td>` +
+        `<td class="num">${fmt(r.events)}${byE ? `<span class="rel" style="width:${28 * r.events / max}px;background:${color}"></span>` : ""}</td>` +
+        `<td class="num">${fmt(r.price_events)}${!byE ? `<span class="rel" style="width:${28 * r.price_events / max}px;background:${color}"></span>` : ""}</td>` +
+        (extra ? `<td class="num">${fmt(r.active_symbols)}</td>` : "") + `</tr>`).join("");
+  };
+  document.getElementById("t-min").innerHTML = tbl(rowsM, false, true);
+  document.getElementById("t-sec").innerHTML = tbl(rowsS, true, false);
+}
+document.getElementById("pct-note").textContent =
+  `Per-second load during weekday trading hours (09:00–17:59): all events median ${fmt(pct.events[0])}, p90 ${fmt(pct.events[1])}, p99 ${fmt(pct.events[2])}, max ${fmt(pct.events[4])}; ` +
+  `price events median ${fmt(pct.price_events[0])}, p99 ${fmt(pct.price_events[2])}, max ${fmt(pct.price_events[4])}. Size Kafka partitions and Streams threads for the bursts, not the median.`;
+function chips(id, opts, get, set) {
+  const box = document.getElementById(id);
+  opts.forEach(([v, lab]) => {
+    const c = document.createElement("button"); c.className = "chip"; c.textContent = lab; c.id = id + "-" + v;
+    c.setAttribute("aria-pressed", get() === v);
+    c.onclick = () => { set(v); box.querySelectorAll(".chip").forEach(x => x.setAttribute("aria-pressed", x === c)); };
+    box.appendChild(c);
+  });
+}
+chips("peak-chips", [["events", "All events"], ["price", "Price events"]], () => peakBy, v => { peakBy = v; drawPeaks(); });
+
+/* ---------- symbols ---------- */
+let symBy = "e", selected = null;
+const conc = k => D.concentration.filter(r => r[k] != null).reduce((m, r) => (m[r.rank] = r[k], m), {});
+const ce = conc("events_share"), cp = conc("price_share");
+document.getElementById("conc-note").textContent =
+  `The distribution has a long tail: the top 10 symbols produce ${(100 * ce[10]).toFixed(1)}% of all events and ${(100 * cp[10]).toFixed(1)}% of price events; ` +
+  `the top 100 produce ${(100 * ce[100]).toFixed(1)}% and ${(100 * cp[100]).toFixed(1)}%. Hot keys like these decide how evenly Kafka partitions and Streams tasks are loaded.`;
+const exName = { FR: "Paris", NL: "Amsterdam", ETR: "Xetra" };
+function topSymbols() { return [...D.symbols].sort((a, b) => b[symBy] - a[symBy]).slice(0, 25); }
+function drawBars() {
+  const list = topSymbols(), max = list[0][symBy], color = symBy === "e" ? "var(--events)" : "var(--price)";
+  if (!selected || !list.find(s => s.s === selected)) selected = list[0].s;
+  document.getElementById("bars-title").innerHTML = `<span class="swatch" style="background:${color}"></span>Top 25 symbols by ${symBy === "e" ? "all events" : "price events"}, whole week`;
+  const box = document.getElementById("bars"); box.innerHTML = "";
+  list.forEach(s => {
+    const r = document.createElement("div"); r.className = "bar-row"; r.tabIndex = 0; r.setAttribute("role", "option");
+    r.setAttribute("aria-selected", s.s === selected);
+    const [ex] = s.s.split(".").slice(-1);
+    const pk = symBy === "e" ? s.peakE : s.peakP;
+    r.innerHTML = `<div class="sym" title="${s.s}">${s.s}<small>${s.type === "I" ? "index" : "equity"}</small></div>` +
+      `<div class="track"><div class="fill" style="width:${Math.max(0.5, 100 * s[symBy] / max)}%;background:${color}"></div></div>` +
+      `<div class="val">${compact(s[symBy])}</div>`;
+    const pick = () => { selected = s.s; box.querySelectorAll(".bar-row").forEach(x => x.setAttribute("aria-selected", x === r)); drawSymbol(); };
+    r.onclick = pick; r.onkeydown = ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); pick(); } };
+    r.onpointermove = ev => showTip(`<b>${s.s}</b> · ${exName[ex] || ex} ${s.type === "I" ? "index" : "equity"}<br>${fmt(s.e)} events · ${fmt(s.p)} price events<br>busiest minute: ${fmt(pk[1])} at ${isoLabel(pk[0])}`, ev.clientX, ev.clientY);
+    r.onpointerleave = hideTip;
+    box.appendChild(r);
+  });
+  drawSymbol(); drawHeat();
+}
+function drawSymbol() {
+  const s = D.symbols.find(x => x.s === selected), vals = symBy === "e" ? s.se : s.sp;
+  const pk = symBy === "e" ? s.peakE : s.peakP;
+  document.getElementById("sym-title").innerHTML = `<span class="swatch" style="background:${symBy === "e" ? "var(--events)" : "var(--price)"}"></span>${s.s}: ${symBy === "e" ? "events" : "price events"} per 15 min · busiest minute ${fmt(pk[1])} at ${isoLabel(pk[0])}`;
+  const n = 5 * 96;
+  lineChart(document.getElementById("ch-s"), vals.slice(0, n), {
+    ticks: () => [0, 96, 192, 288, 384], xLabel: i => labelAt(START + i * 15 * MIN).split(" ").slice(0, 2).join(" "),
+    xFull: i => labelAt(START + i * 15 * MIN), unit: "/15 min",
+    color: symBy === "e" ? "--events" : "--price", wash: symBy === "e" ? "--events-wash" : "--price-wash", readout: document.getElementById("ro-s"),
+  });
+}
+const H0 = 7 * 4, H1 = 19 * 4; // 07:00–19:00 in 15-min buckets
+function rampColor(t, hue) {
+  // One-hue sequential ramp from near-surface to the deep step of the metric's hue.
+  const light = hue === "e" ? [[205,226,251],[42,120,214],[13,54,107]] : [[251,221,207],[235,104,52],[122,40,10]];
+  const dark = hue === "e" ? [[24,40,62],[57,135,229],[205,226,251]] : [[52,28,20],[217,89,38],[251,221,207]];
+  const isDark = css("color-scheme").includes("dark") || matchMedia("(prefers-color-scheme: dark)").matches && document.documentElement.dataset.theme !== "light";
+  const st = isDark ? dark : light, k = t < .5 ? 0 : 1, f = t < .5 ? t * 2 : (t - .5) * 2;
+  const c = st[k].map((v, j) => Math.round(v + (st[k + 1][j] - v) * f));
+  return `rgb(${c})`;
+}
+function drawHeat() {
+  const list = topSymbols(), cv = document.getElementById("heat");
+  document.getElementById("heat-title").textContent = `When each top symbol peaks: ${symBy === "e" ? "events" : "price events"} per 15 min`;
+  document.getElementById("ramp").style.background = `linear-gradient(90deg, ${rampColor(0, symBy)}, ${rampColor(.5, symBy)}, ${rampColor(1, symBy)})`;
+  const labW = 100, cols = 5 * (H1 - H0), wrap = cv.parentElement;
+  const cw = Math.max(2, (wrap.clientWidth - labW - 4) / cols), rh = 16, topPad = 18;
+  const W = labW + cols * cw, H = topPad + list.length * rh, dpr = devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
+  const g = cv.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  g.font = `11px ${css("--f-data")}`; g.textBaseline = "middle";
+  for (let d = 0; d < 5; d++) {
+    g.fillStyle = css("--muted"); g.fillText(`${DAY[d]} ${8 + d}`, labW + d * (H1 - H0) * cw + 2, 8);
+  }
+  list.forEach((s, r) => {
+    const vals = symBy === "e" ? s.se : s.sp;
+    let mx = 0; for (let d = 0; d < 5; d++) for (let b = H0; b < H1; b++) mx = Math.max(mx, vals[d * 96 + b]);
+    g.fillStyle = css("--ink-2"); g.fillText(s.s, 0, topPad + r * rh + rh / 2);
+    for (let d = 0; d < 5; d++) for (let b = H0; b < H1; b++) {
+      const v = vals[d * 96 + b], x = labW + (d * (H1 - H0) + b - H0) * cw;
+      g.fillStyle = v ? rampColor(mx ? v / mx : 0, symBy) : css("--surface");
+      g.fillRect(x, topPad + r * rh, cw + 0.5, rh - 2);
+    }
+  });
+  g.fillStyle = css("--surface");
+  for (let d = 1; d < 5; d++) g.fillRect(labW + d * (H1 - H0) * cw - 1, topPad, 2, H - topPad);
+  cv.onpointermove = ev => {
+    const rect = cv.getBoundingClientRect(), x = ev.clientX - rect.left - labW, y = ev.clientY - rect.top - topPad;
+    const c = Math.floor(x / cw), r = Math.floor(y / rh);
+    if (c < 0 || c >= cols || r < 0 || r >= list.length) return hideTip();
+    const d = Math.floor(c / (H1 - H0)), b = H0 + c % (H1 - H0), idx = d * 96 + b, s = list[r];
+    showTip(`<b>${s.s}</b><br>${labelAt(START + idx * 15 * MIN)}–${labelAt(START + (idx + 1) * 15 * MIN).split(" ")[3]}<br>${fmt(s.se[idx])} events · ${fmt(s.sp[idx])} price`, ev.clientX, ev.clientY);
+  };
+  cv.onpointerleave = hideTip;
+}
+chips("sym-chips", [["e", "All events"], ["p", "Price events"]], () => symBy, v => { symBy = v; drawBars(); });
+
+/* ---------- exchange table ---------- */
+(function () {
+  const rows = D.byExchange, max = Math.max(...rows.map(r => r.events));
+  document.getElementById("t-ex").innerHTML = `<tr><th>Exchange</th><th>Type</th><th class="num">Symbols</th><th class="num">Events</th><th class="num">Share</th><th class="num">Price events</th><th class="num">Price share</th></tr>` +
+    rows.map(r => `<tr><td>${exName[r.exchange] || r.exchange} (${r.exchange})</td><td>${r.sectype === "I" ? "Index" : "Equity"}</td><td class="num">${fmt(r.symbols)}</td>` +
+      `<td class="num">${fmt(r.events)}</td><td class="num">${(100 * r.events / T.events).toFixed(1)}%</td>` +
+      `<td class="num">${fmt(r.price_events)}</td><td class="num">${T.price_events ? (100 * r.price_events / T.price_events).toFixed(1) : 0}%</td></tr>`).join("");
+})();
+
+function drawAll() { drawWeek(); drawDay(); drawPeaks(); drawBars(); }
+drawAll();
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(drawAll, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawHeat);
+new MutationObserver(drawHeat).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>
