@@ -16,7 +16,7 @@ import scala.jdk.CollectionConverters.*
 object ConsumerApp:
   def main(args: Array[String]): Unit =
     val bootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP", "localhost:9092")
-    val topic = sys.env.getOrElse("KAFKA_TOPIC", "trading-events-processed")
+    val topic = sys.env.getOrElse("KAFKA_TOPIC", "window-results")
     val group = sys.env.getOrElse("KAFKA_GROUP", "trading-consumer")
     val level = sys.env.getOrElse("CONSUMER_LOG_LEVEL", "SUMMARY").toUpperCase
     val summaryIntervalMs = sys.env

@@ -75,7 +75,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_INPUT_TOPIC: trading-events
-      KAFKA_OUTPUT_TOPIC: trading-events-processed
+      KAFKA_WINDOW_RESULTS_TOPIC: window-results
       KAFKA_ADVISORY_TOPIC: advisories
       KAFKA_SYMBOL_TOPIC: symbols
       STREAMS_QUERY_PORT: "7070"
@@ -109,7 +109,7 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
-      KAFKA_TOPIC: trading-events-processed
+      KAFKA_TOPIC: window-results
       KAFKA_GROUP: trading-consumer
       CONSUMER_LOG_LEVEL: ${CONSUMER_LOG_LEVEL:-SUMMARY}
     depends_on:

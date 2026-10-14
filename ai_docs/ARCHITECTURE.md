@@ -14,13 +14,13 @@ flowchart LR
 
     subgraph apps["Scala 3 apps (JVM)"]
         producer["producer<br/>CSV replay"]
-        streams["streams<br/>StreamsApp<br/>per-tick EMA + 5-min windows<br/>+ QueryService (:7070)"]
+        streams["streams<br/>StreamsApp<br/>5-min window EMA + QueryService (:7070)"]
         consumer["consumer<br/>ConsumerApp<br/>ALL / SUMMARY logs"]
     end
 
     subgraph broker["Kafka broker (KRaft, single node)"]
         traw[["trading-events<br/>(keyed by symbol)"]]
-        tproc[["trading-events-processed"]]
+        tresults[["window-results<br/>(one per closed window)"]]
         tadv[["advisories<br/>(Query 2 crossovers)"]]
         tsym[["symbols<br/>(log-compacted registry)"]]
     end
@@ -31,11 +31,11 @@ flowchart LR
     csv -->|"timestamp-ordered files<br/>event-time replay"| producer
     producer -->|"key=symbol<br/>value=normalized event JSON"| traw
     traw --> streams
-    streams -->|"adds ema38 / ema100 per tick"| tproc
+    streams -->|"close + EMA values + optional signal"| tresults
     streams -->|"one record per crossover"| tadv
     streams -->|"one record per new symbol"| tsym
     streams --> store
-    tproc --> consumer
+    tresults --> consumer
 
     tsym -->|"replay + cache<br/>(group-less assign)"| ui
     store -->|"interactive query<br/>GET /ema?symbol="| ui
@@ -165,8 +165,8 @@ UI draws lines and markers from one query instead of joining two streams.
 A windowed `KTable.toStream()` emits on *every* update, which would apply the EMA
 recurrence once per input event instead of once per window. The assignment is
 explicit that window `w_i` is evaluated when `w_{i+1}` starts, so the topology
-uses `Suppressed.untilWindowCloses`. This also collapses the advisory topic from
-one record per tick to one record per genuine crossover.
+uses `Suppressed.untilWindowCloses`. Each closed window emits one record to
+`window-results`; only genuine crossovers are forwarded to `advisories`.
 
 ### The symbol registry is a compacted topic
 

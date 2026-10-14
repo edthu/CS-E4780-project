@@ -2,7 +2,7 @@
 
 A crafted dataset is appended to the file the producer follows; the results
 are read back the way real users get them (the streams /ema query API, the
-advisories/symbols/processed topics, the UI health endpoint) and compared with
+window-results/advisories/symbols topics, the UI health endpoint) and compared with
 tests/harness/reference.py, which implements the assignment's definitions
 independently of the Scala code.
 """
@@ -191,12 +191,29 @@ def test_symbol_registry_has_each_symbol_once(stack):
     assert sorted(keys) == sorted(SERIES)
 
 
-def test_every_event_reaches_processed_topic(stack):
-    records = read_topic("trading-events-processed", len(DATASET))
-    assert len(records) == len(DATASET)
-    for r in records[:50]:
-        v = json.loads(r.value)
-        assert {"ema38", "ema100"} <= v.keys()
+def test_window_results_topic_matches_reference(stack):
+    want = {
+        (symbol, point["windowStart"]): point
+        for symbol, points in EXPECTED.items()
+        for point in points
+    }
+    records = read_topic("window-results", len(want))
+    got = {}
+    for record in records:
+        value = json.loads(record.value)
+        assert record.key.decode() == value["symbol"]
+        key = (value["symbol"], value["windowStart"])
+        assert key not in got
+        got[key] = value
+
+    assert got.keys() == want.keys()
+    for key, expected in want.items():
+        actual = got[key]
+        assert actual["close"] == expected["close"], key
+        assert actual["windowEnd"] == expected["windowEnd"], key
+        assert math.isclose(actual["ema38"], expected["ema38"], rel_tol=1e-9, abs_tol=1e-9), key
+        assert math.isclose(actual["ema100"], expected["ema100"], rel_tol=1e-9, abs_tol=1e-9), key
+        assert actual["signal"] == expected["signal"], key
 
 
 def test_ui_is_healthy(stack):

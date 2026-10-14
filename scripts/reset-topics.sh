@@ -28,7 +28,7 @@ STREAMS_SVC="${STREAMS_SVC:-streams}"
 BOOTSTRAP="${BOOTSTRAP:-localhost:9092}"
 PARTITIONS="${PARTITIONS:-6}"
 APP_ID="${APP_ID:-trading-streams}"
-TOPICS=("trading-events" "trading-events-processed" "advisories" "symbols")
+TOPICS=("trading-events" "window-results" "advisories" "symbols")
 
 BUILD=0
 [[ "${1:-}" == "--build" ]] && BUILD=1

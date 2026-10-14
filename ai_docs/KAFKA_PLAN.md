@@ -1,11 +1,10 @@
 # Kafka Producer / Consumer / Streams Plan
 
-> **Status: historical.** This is the original plan for the Kafka *demo*
-> milestone, when the streams app only added a `processedBy` marker field. That
-> placeholder has since been replaced by the real Query 1 (EMA over 5-minute
-> tumbling windows) and Query 2 (crossover advisories) logic, plus a symbol
-> registry and a Streamlit UI. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the
-> current architecture and the motivation behind each choice.
+> **Status: historical plan, updated to match the implementation.** The streams
+> application computes Query 1 (EMA over 5-minute tumbling windows) and Query 2
+> (crossover advisories), alongside a symbol registry and Streamlit UI. It
+> consumes every raw tick but emits downstream results only when a window
+> closes. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the current runtime flow.
 
 CS-E4780 course project — Detecting Trading Trends in Financial Tick Data.
 
@@ -53,11 +52,11 @@ Compose deployment, build flow, module dependencies).
 CSV ──▶ ingestion ──▶ events.ndjson ──▶ producer ──▶ [trading-events] ──▶ streams
                                                                               │
                                                                               ▼
-        consumer / UI ◀────────────────────── [trading-events-processed] ◀───┘
+        consumer ◀─────────────────────────── [window-results] ◀─────────────┘
 ```
 
-- **Topics**: `trading-events` (raw) and `trading-events-processed` (after the
-  streams marker). A future `advisories` topic carries buy/sell events.
+- **Topics**: `trading-events` (raw), `window-results` (one result per closed
+  symbol-window), and `advisories` (BUY/SELL crossovers only).
 - **Keying**: message key = `symbol`, so all events for a symbol land on one
   partition. This preserves per-symbol ordering and enables per-symbol stateful
   windowing downstream.
@@ -87,15 +86,15 @@ with `key = symbol` and `value =` the raw NDJSON line forwarded verbatim, using
 `StringSerializer` for both.
 
 ### Consumer
-Subscribes to `trading-events-processed` with `auto.offset.reset=earliest` and
-prints each record (`key -> value`). This is the test/demo consumer.
+Subscribes to `window-results` with `auto.offset.reset=earliest` and prints
+each closed-window result (`key -> value`).
 
 ### Streams
-Topology: `stream(trading-events) → mapValues(addMarker) → to(trading-events-processed)`.
-`addMarker` is a pure, unit-testable function that adds
-`"processedBy":"processed by kafka streams"` and preserves the four original
-fields. This stateless `mapValues` is the explicit seam that later becomes the
-EMA windowing and crossover logic.
+Topology: `stream(trading-events) → group by symbol → 5-minute tumbling window
+→ last event-time price → close window → EMA38/EMA100 → window-results`.
+Every closed window is emitted, including windows with no signal. The same
+result stream is filtered into `advisories`, which contains crossover events
+only. The queryable history store feeds the UI.
 
 ### Docker
 A single-node Apache Kafka service in **KRaft mode** (no ZooKeeper) with topic
@@ -126,12 +125,13 @@ docker compose run --rm ingestion
 #    file and then stays alive, publishing any lines appended later.
 docker compose up -d producer
 
-# 5. Watch the processed output
+# 5. Watch the closed-window results
 docker compose logs -f consumer
 ```
 
-Topics are auto-created on first use. Inside the Compose network the apps reach
-the broker at `kafka:19092`; from the host it's `localhost:9092`.
+`kafka-init` creates the topics with explicit partition counts. Inside the
+Compose network the apps reach the broker at `kafka:19092`; from the host it's
+`localhost:9092`.
 
 ### Long-running vs batch
 
@@ -163,15 +163,15 @@ container-written `./output` is root-owned):
 ```bash
 sbt streams/run                              # stream processor (stays running)
 sbt "producer/run samples/events.ndjson"     # publish
-sbt consumer/run                             # read processed output
+sbt consumer/run                             # read closed-window results
 ```
 
 ### Consumer log levels
 
 `CONSUMER_LOG_LEVEL` controls verbosity (default `SUMMARY`):
 
-- `ALL` — print every record as `key -> value`. Use this to eyeball that the
-  `processedBy` field is present.
+- `ALL` — print every closed-window result as `key -> value`, including close,
+  EMA values, window bounds, and any crossover signal.
 - `SUMMARY` — periodic throughput stats only (`consumed`, `recordsPerSecond`,
   `avgRecordsPerSecond`), mirroring the ingestion app's rows/second logging.
   Cadence set by `CONSUMER_SUMMARY_INTERVAL_MS` (default 2000). A final
@@ -227,17 +227,9 @@ scripts/reset-topics.sh --build
 
 ## Verification
 
-1. **Unit test** `addMarker` without a broker (munit): asserts the marker field
-   is added and the four original fields are preserved. Optionally a
-   `TopologyTestDriver` in-memory topology test.
+1. **Topology tests** run without a broker using `TopologyTestDriver`: verify
+  one `window-results` record per closed window, last-price selection, one EMA
+  step per window, and crossover-only records on `advisories`.
 2. **`sbt compile`** across all modules; **`sbt test`**.
-3. **End-to-end demo** (small sample, no full 5 GB run needed):
-   - `docker compose up kafka` (or a local broker).
-   - Create a tiny `output/events.ndjson` (a few lines, shape from
-     `IngestionAppSuite`).
-   - Run producer → streams → consumer.
-   - **Success** = the consumer prints records on `trading-events-processed` that
-     contain `"processed by kafka streams"`, with original fields intact and the
-     key equal to the symbol.
-4. Confirm ingestion still builds and tests unchanged after the `Event.scala`
-   move into `common`.
+3. **End-to-end test** compares window results, advisories, and the query API
+  against the independent assignment reference.

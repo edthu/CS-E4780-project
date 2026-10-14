@@ -23,7 +23,7 @@ PARTITIONS="${PARTITIONS:-6}"
 REPLICATION="${REPLICATION:-1}"
 KAFKA_BIN="${KAFKA_BIN:-/opt/kafka/bin}"
 SYMBOL_TOPIC="${SYMBOL_TOPIC:-symbols}"
-read -r -a DATA_TOPICS <<<"${DATA_TOPICS:-trading-events trading-events-processed advisories}"
+read -r -a DATA_TOPICS <<<"${DATA_TOPICS:-trading-events window-results advisories}"
 
 kt() { "$KAFKA_BIN/kafka-topics.sh" --bootstrap-server "$BOOTSTRAP" "$@"; }
 

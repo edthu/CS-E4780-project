@@ -46,8 +46,8 @@ the Scala code:
 
 - `/ema` for every symbol and window: close, EMA38, EMA100, signal;
 - the `advisories` topic;
+- the `window-results` topic, with one record per closed symbol-window;
 - the `symbols` topic, with each symbol exactly once;
-- `trading-events-processed`, with one record per input event;
 - UI health;
 - after `--scale streams=2`, each replica answers for every symbol (proxying and changelog restore).
 

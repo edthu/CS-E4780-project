@@ -1,17 +1,4 @@
 class StreamsAppSuite extends munit.FunSuite:
-  test("enrichProcessed adds EMA fields to the event payload"):
-    val input =
-      """{"symbol":"GOOD","securityType":"E","price":123.45,"timestamp":"2021-11-08T01:01:07.000"}"""
-
-    val obj = ujson.read(StreamsApp.enrichProcessed(input, 124.0, 123.0))
-
-    assertEquals(obj("symbol").str, "GOOD")
-    assertEquals(obj("securityType").str, "E")
-    assertEquals(obj("price").num, 123.45)
-    assertEquals(obj("timestamp").str, "2021-11-08T01:01:07.000")
-    assertEquals(obj("ema38").num, 124.0)
-    assertEquals(obj("ema100").num, 123.0)
-
   test("calculateEma uses the EMA smoothing formula"):
     // EMA_{s,w0} = 0: the first window is weighted against zero, not seeded.
     val first = StreamsApp.calculateEma(0.0, 100.0, 38)

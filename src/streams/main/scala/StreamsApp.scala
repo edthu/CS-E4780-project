@@ -12,13 +12,12 @@ import org.apache.kafka.streams.state.{KeyValueStore, Stores, WindowStore}
 
 /** Kafka Streams application.
   *
-  * The stream enriches each input event with EMA state and emits advisories for
-  * BUY/SELL crossovers. This follows the project assignment pattern: 5-minute tumbling windows over the
-  * raw trading events, using the last price in each window as the closing value,
-  * and then evaluating the EMA signals on the resulting window close.
+  * The stream aggregates raw trading events into 5-minute tumbling windows,
+  * evaluates each window's last price once, and emits window results plus
+  * BUY/SELL crossover advisories.
   *
   * Three side outputs feed the rest of the system:
-  *   - `trading-events-processed`: every event, enriched with per-tick EMAs.
+  *   - `window-results`: one EMA result per symbol per closed window.
   *   - `advisories`: one record per EMA crossover (Query 2).
   *   - `symbols`: a log-compacted registry of every symbol seen, for the UI.
   *
@@ -34,7 +33,6 @@ object StreamsApp:
 
   /** Queryable store holding one EMA point per symbol per closed window. */
   val HistoryStore = "ema-history"
-  private val RecordStateStore = "record-ema-state"
   private val WindowStateStore = "window-ema-state"
   private val SymbolSeenStore = "symbol-seen"
 
@@ -48,12 +46,6 @@ object StreamsApp:
       if eventTimeMs >= lastTimestampMs then
         WindowAccumulator(obj("price").num, eventTimeMs)
       else this
-
-  def enrichProcessed(value: String, emaFast: Double, emaSlow: Double): String =
-    val obj = ujson.read(value)
-    obj("ema38") = emaFast
-    obj("ema100") = emaSlow
-    obj.render()
 
   /** EMA recurrence from the assignment (Sec. 3.2). The first window of a
     * symbol has `previous == 0` (EMA_{s,w0} = 0), so it is *not* seeded with the
@@ -151,10 +143,7 @@ object StreamsApp:
     }
   )
 
-  /** Evaluates the EMA recurrence once per *closed* window and records the
-    * result in the queryable history store. Only crossovers are forwarded
-    * downstream, so the `advisories` topic stays a low-volume signal feed.
-    */
+  /** Evaluates and records one EMA result per closed window. */
   private final class WindowSignalTransformer extends Transformer[String, String, KeyValue[String, String]]:
     private var store: KeyValueStore[String, String] = _
     private var history: WindowStore[String, String] = _
@@ -181,19 +170,16 @@ object StreamsApp:
         windowStart.toLong
       )
 
-      signal match
-        case Some(label) =>
-          val advisory = ujson.Obj(
-            "symbol" -> symbol,
-            "signal" -> label,
-            "ema38" -> nextFast,
-            "ema100" -> nextSlow,
-            "close" -> close,
-            "windowStart" -> windowStart,
-            "windowEnd" -> windowEnd
-          )
-          KeyValue.pair(symbol, advisory.render())
-        case None => null
+      val result = ujson.Obj(
+        "symbol" -> symbol,
+        "signal" -> signal.map(ujson.Str(_)).getOrElse(ujson.Null),
+        "ema38" -> nextFast,
+        "ema100" -> nextSlow,
+        "close" -> close,
+        "windowStart" -> windowStart,
+        "windowEnd" -> windowEnd
+      )
+      KeyValue.pair(symbol, result.render())
 
     override def close(): Unit = ()
 
@@ -227,25 +213,15 @@ object StreamsApp:
 
     override def close(): Unit = ()
 
-  def emittedProcessedRecord(value: String, emaFast: Double, emaSlow: Double): String =
-    enrichProcessed(value, emaFast, emaSlow)
-
   def buildTopology(
       inputTopic: String,
-      outputTopic: String,
+      windowResultsTopic: String,
       advisoryTopic: String = AdvisoryTopic,
       symbolTopic: String = SymbolTopic,
       historyRetention: Duration = Duration.ofDays(8)
   ): Topology =
     val builder = new StreamsBuilder()
     val stringSerde = Serdes.String()
-    builder.addStateStore(
-      Stores.keyValueStoreBuilder(
-        Stores.persistentKeyValueStore(RecordStateStore),
-        Serdes.String(),
-        Serdes.String()
-      )
-    )
     builder.addStateStore(
       Stores.keyValueStoreBuilder(
         Stores.persistentKeyValueStore(WindowStateStore),
@@ -274,32 +250,6 @@ object StreamsApp:
 
     val source: KStream[String, String] =
       builder.stream(inputTopic, Consumed.`with`(stringSerde, stringSerde))
-
-    val processedSupplier = new TransformerSupplier[String, String, KeyValue[String, String]] {
-      override def get(): Transformer[String, String, KeyValue[String, String]] =
-        new Transformer[String, String, KeyValue[String, String]] {
-          private var store: KeyValueStore[String, String] = _
-
-          override def init(context: ProcessorContext): Unit =
-            this.store = context.getStateStore(RecordStateStore).asInstanceOf[KeyValueStore[String, String]]
-
-          override def transform(key: String, value: String): KeyValue[String, String] =
-            val obj = ujson.read(value)
-            val symbol = obj("symbol").str
-            val close = obj("price").num
-            val prev = parseState(store.get(symbol))
-            val fast = calculateEma(prev.emaFast, close, 38)
-            val slow = calculateEma(prev.emaSlow, close, 100)
-            store.put(symbol, renderState(EmaState(fast, slow)))
-            KeyValue.pair(symbol, enrichProcessed(value, fast, slow))
-
-          override def close(): Unit = ()
-        }
-    }
-
-    val enrichedProcessed = source.transform(processedSupplier, RecordStateStore)
-
-    enrichedProcessed.to(outputTopic, Produced.`with`(stringSerde, stringSerde))
 
     val symbolSupplier = new TransformerSupplier[String, String, KeyValue[String, String]] {
       override def get(): Transformer[String, String, KeyValue[String, String]] =
@@ -340,9 +290,10 @@ object StreamsApp:
         new WindowSignalTransformer()
     }
 
-    val advisories = windows.transform(advisoriesSupplier, WindowStateStore, HistoryStore)
-    advisories
-      .filter((_: String, v: String) => v != null)
+    val windowResults = windows.transform(advisoriesSupplier, WindowStateStore, HistoryStore)
+    windowResults.to(windowResultsTopic, Produced.`with`(stringSerde, stringSerde))
+    windowResults
+      .filter((_: String, v: String) => ujson.read(v)("signal") != ujson.Null)
       .to(advisoryTopic, Produced.`with`(stringSerde, stringSerde))
 
     builder.build()
@@ -351,7 +302,7 @@ object StreamsApp:
     val bootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP", "localhost:9092")
     val appId = sys.env.getOrElse("KAFKA_APP_ID", "trading-streams")
     val inputTopic = sys.env.getOrElse("KAFKA_INPUT_TOPIC", "trading-events")
-    val outputTopic = sys.env.getOrElse("KAFKA_OUTPUT_TOPIC", "trading-events-processed")
+    val windowResultsTopic = sys.env.getOrElse("KAFKA_WINDOW_RESULTS_TOPIC", "window-results")
     val advisoryTopic = sys.env.getOrElse("KAFKA_ADVISORY_TOPIC", AdvisoryTopic)
     val symbolTopic = sys.env.getOrElse("KAFKA_SYMBOL_TOPIC", SymbolTopic)
     val queryPort = sys.env.getOrElse("STREAMS_QUERY_PORT", "7070").toInt
@@ -395,10 +346,10 @@ object StreamsApp:
     stateDir.foreach(dir => props.put(StreamsConfig.STATE_DIR_CONFIG, dir))
 
     val topology =
-      buildTopology(inputTopic, outputTopic, advisoryTopic, symbolTopic, Duration.ofDays(retentionDays))
+      buildTopology(inputTopic, windowResultsTopic, advisoryTopic, symbolTopic, Duration.ofDays(retentionDays))
     val streams = new KafkaStreams(topology, props)
     println(
-      s"[streams] appId=$appId bootstrap=$bootstrap in=$inputTopic out=$outputTopic " +
+      s"[streams] appId=$appId bootstrap=$bootstrap in=$inputTopic windowResults=$windowResultsTopic " +
         s"adv=$advisoryTopic symbols=$symbolTopic server=$advertisedHost"
     )
 

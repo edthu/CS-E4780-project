@@ -4,10 +4,9 @@ import org.apache.kafka.streams.{StreamsConfig, TopologyTestDriver}
 import scala.jdk.CollectionConverters.*
 
 /** End-to-end topology test with no live broker: pipes records through the real
-  * `buildTopology` (produce -> streams -> consume) and asserts the key survives
-  * while the processed topic includes EMA values, the advisory topic emits
-  * trading signals, the symbol registry stays deduplicated and the queryable
-  * history store gets exactly one point per closed window.
+  * `buildTopology` (produce -> streams -> consume) and asserts one result per
+  * closed window, crossover-only advisories, symbol deduplication, and one
+  * queryable history point per closed window.
   */
 class StreamsTopologySuite extends munit.FunSuite:
 
@@ -25,17 +24,17 @@ class StreamsTopologySuite extends munit.FunSuite:
       classOf[StreamsApp.EventTimeExtractor].getName
     )
     val driver = new TopologyTestDriver(
-      StreamsApp.buildTopology("trading-events", "trading-events-processed", "advisories", "symbols"),
+      StreamsApp.buildTopology("trading-events", "window-results", "advisories", "symbols"),
       props
     )
     try body(driver)
     finally driver.close()
 
-  test("record flows in -> processed topic includes EMA values and advisory signals"):
+  test("closed windows emit EMA results and crossover advisories"):
     withDriver { driver =>
       val in = driver.createInputTopic("trading-events", new StringSerializer, new StringSerializer)
-      val processedOut =
-        driver.createOutputTopic("trading-events-processed", new StringDeserializer, new StringDeserializer)
+      val windowResultsOut =
+        driver.createOutputTopic("window-results", new StringDeserializer, new StringDeserializer)
       val advisoryOut = driver.createOutputTopic("advisories", new StringDeserializer, new StringDeserializer)
 
       // Three windows: [09:00,09:05), [09:05,09:10), [09:10,09:15). The third
@@ -44,14 +43,14 @@ class StreamsTopologySuite extends munit.FunSuite:
       in.pipeInput("RDSA.NL", event("RDSA.NL", 50.0, "2021-11-08T09:06:00.000"))
       in.pipeInput("RDSA.NL", event("RDSA.NL", 40.0, "2021-11-08T09:11:00.000"))
 
-      val processedRecord = processedOut.readKeyValue()
-      assertEquals(processedRecord.key, "RDSA.NL")
-      val processedObj = ujson.read(processedRecord.value)
-      assert(!processedObj.obj.contains("processedBy"), "processedBy should not be present")
-      assertEquals(processedObj("symbol").str, "RDSA.NL")
-      assertEquals(processedObj("price").num, 42.5)
-      assert(processedObj("ema38").num > 0)
-      assert(processedObj("ema100").num > 0)
+      val firstWindow = windowResultsOut.readKeyValue()
+      assertEquals(firstWindow.key, "RDSA.NL")
+      val firstResult = ujson.read(firstWindow.value)
+      assertEquals(firstResult("symbol").str, "RDSA.NL")
+      assertEquals(firstResult("close").num, 42.5)
+      assert(firstResult("ema38").num > 0)
+      assert(firstResult("ema100").num > 0)
+      assertEquals(firstResult("signal").str, "BUY")
 
       // With EMA_{s,w0} = 0 the first window already crosses (EMA38 = 2c/39 >
       // EMA100 = 2c/101 against 0 <= 0), so the only crossover is window 1.
@@ -63,17 +62,19 @@ class StreamsTopologySuite extends munit.FunSuite:
       assertEquals(advisoryObj("close").num, 42.5)
       assert(advisoryObj("ema38").num > advisoryObj("ema100").num)
 
-      val secondProcessedRecord = processedOut.readKeyValue()
-      assertEquals(secondProcessedRecord.key, "RDSA.NL")
-      assertEquals(ujson.read(secondProcessedRecord.value)("price").num, 50.0)
-      assertEquals(ujson.read(processedOut.readKeyValue().value)("price").num, 40.0)
-      assert(processedOut.isEmpty, "no extra processed records expected")
+      val secondWindow = windowResultsOut.readKeyValue()
+      val secondResult = ujson.read(secondWindow.value)
+      assertEquals(secondWindow.key, "RDSA.NL")
+      assertEquals(secondResult("close").num, 50.0)
+      assertEquals(secondResult("signal"), ujson.Null)
+      assert(windowResultsOut.isEmpty, "the still-open third window must not emit")
       assert(advisoryOut.isEmpty, "no extra advisory records expected")
     }
 
   test("suppression evaluates a window once, so EMA steps once per closed window"):
     withDriver { driver =>
       val in = driver.createInputTopic("trading-events", new StringSerializer, new StringSerializer)
+      val windowResults = driver.createOutputTopic("window-results", new StringDeserializer, new StringDeserializer)
 
       // Four ticks inside the first window; without suppression each one would
       // advance the EMA recurrence separately.
@@ -83,6 +84,11 @@ class StreamsTopologySuite extends munit.FunSuite:
       in.pipeInput("AAA.FR", event("AAA.FR", 20.0, "2021-11-08T09:04:00.000"))
       in.pipeInput("AAA.FR", event("AAA.FR", 30.0, "2021-11-08T09:07:00.000"))
       in.pipeInput("AAA.FR", event("AAA.FR", 25.0, "2021-11-08T09:12:00.000"))
+
+      val emittedResults = windowResults.readKeyValuesToList().asScala.toVector
+      assertEquals(emittedResults.size, 2)
+      assertEquals(ujson.read(emittedResults(0).value)("close").num, 20.0)
+      assertEquals(ujson.read(emittedResults(1).value)("close").num, 30.0)
 
       val store = driver.getWindowStore[String, String](StreamsApp.HistoryStore)
       val points =
@@ -111,6 +117,8 @@ class StreamsTopologySuite extends munit.FunSuite:
 
       // The first-window crossover is recorded alongside the EMA values; window
       // 2 stays above, so it carries no signal.
+      assertEquals(ujson.read(emittedResults(0).value)("signal").str, "BUY")
+      assertEquals(ujson.read(emittedResults(1).value)("signal"), ujson.Null)
       assertEquals(points(0)("signal").str, "BUY")
       assertEquals(points(1)("signal"), ujson.Null)
     }

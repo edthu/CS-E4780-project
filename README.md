@@ -38,7 +38,7 @@ REPLAY_SPEED=1 ./scripts/run-pipeline.sh  # real-time event-time pacing
 
 Consumer summary logging is the default so a large replay does not print every
 event. For a small sample, `CONSUMER_LOG_LEVEL=ALL ./scripts/run-pipeline.sh`
-prints each processed record. Stop the services with `docker compose down`.
+prints each closed-window result. Stop the services with `docker compose down`.
 
 ### Manual step-by-step startup
 
@@ -62,8 +62,8 @@ docker compose logs -f producer streams consumer
 ```
 
 The producer can also be started before the other app services; Compose will
-start its Kafka and topic-initialization dependencies. The consumer itself only
-reads processed Kafka events and does not trigger CSV ingestion.
+start its Kafka and topic-initialization dependencies. The consumer reads one
+result per closed window and does not trigger CSV ingestion.
 
 See [INGESTION.md](INGESTION.md) for CSV field mapping, event validation, and
 replay ordering and pacing details.
@@ -105,7 +105,7 @@ symbol's partition and proxies the request there. `streams` therefore uses
 | Topic | Contents | Cleanup |
 |---|---|---|
 | `trading-events` | raw tick events, key = symbol | delete |
-| `trading-events-processed` | every event plus per-tick `ema38` / `ema100` | delete |
+| `window-results` | one close and EMA result per closed symbol-window, with optional signal | delete |
 | `advisories` | one record per EMA crossover (`signal` = BUY/SELL) | delete |
 | `symbols` | registry of observed symbols, key = symbol | **compact** |
 
@@ -128,8 +128,8 @@ sbt test
 ```
 
 `StreamsTopologySuite` runs the real topology through a `TopologyTestDriver`:
-EMA enrichment, one EMA step per *closed* window, crossover advisories, and
-symbol-registry deduplication.
+one window result per closed window, one EMA step per window, crossover-only
+advisories, and symbol-registry deduplication.
 
 The end-to-end test (real Compose stack vs. an independent reference of the
 assignment) and the performance harness (latency, CPU, memory and storage I/O
