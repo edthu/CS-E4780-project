@@ -16,7 +16,10 @@ ingestion run or NDJSON handoff step. The consumer remains a separate downstream
 service, and Compose starts it together with Kafka, Streams, and the UI.
 
 ```bash
-# Download the sample day (large file); add any other daily CSVs under data/.
+# Download the entire week of datasets (08-11-21 to 14-11-21):
+./scripts/download-all-data.sh
+
+# Or download just the sample single day (08-11-21):
 ./scripts/download-data.sh
 
 # Build app jars and start the whole pipeline.

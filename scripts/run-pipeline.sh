@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
 if ! compgen -G "$ROOT_DIR/data/*.csv" > /dev/null; then
-  echo "No CSV files found in data/. Run ./scripts/download-data.sh or add daily CSV files first." >&2
+  echo "No CSV files found in data/. Run ./scripts/download-all-data.sh (or ./scripts/download-data.sh for a single day) first." >&2
   exit 1
 fi
 

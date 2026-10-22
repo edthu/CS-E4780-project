@@ -144,3 +144,59 @@ class StreamsTopologySuite extends munit.FunSuite:
 
       assert(symbolsOut.isEmpty, "repeat sightings must not be re-emitted")
     }
+
+  test("processes events across multiple days carrying state, deduplicating symbols, and retaining history"):
+    withDriver { driver =>
+      val in = driver.createInputTopic("trading-events", new StringSerializer, new StringSerializer)
+      val windowResultsOut =
+        driver.createOutputTopic("window-results", new StringDeserializer, new StringDeserializer)
+      val advisoryOut = driver.createOutputTopic("advisories", new StringDeserializer, new StringDeserializer)
+      val symbolsOut = driver.createOutputTopic("symbols", new StringDeserializer, new StringDeserializer)
+
+      // Day 1 (Nov 8): two windows for RDSA.NL ([09:00, 09:05) and [09:05, 09:10))
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 100.0, "2021-11-08T09:00:00.000"))
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 102.0, "2021-11-08T09:06:00.000"))
+      // End of day 1: open a window at 17:25
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 105.0, "2021-11-08T17:25:00.000"))
+
+      // Day 2 (Nov 9): morning event at 09:00 advances stream time past Nov 8 17:30, closing Day 1's last window
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 110.0, "2021-11-09T09:00:00.000"))
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 112.0, "2021-11-09T09:06:00.000"))
+
+      // Day 5 (Nov 12): morning event advances stream time across mid-week gap to Friday
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 120.0, "2021-11-12T09:00:00.000"))
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 125.0, "2021-11-12T09:06:00.000"))
+
+      // Pushing stream time past Friday 09:10
+      in.pipeInput("RDSA.NL", event("RDSA.NL", 125.0, "2021-11-12T09:11:00.000"))
+
+      // Check symbol registry: RDSA.NL emitted only once despite events across multiple days
+      val symbols = symbolsOut.readKeyValuesToList().asScala.map(_.key).toVector
+      assertEquals(symbols, Vector("RDSA.NL"))
+
+      // Check window results: all 7 windows closed across the week
+      val results = windowResultsOut.readKeyValuesToList().asScala.toVector
+      assertEquals(results.size, 7)
+
+      val store = driver.getWindowStore[String, String](StreamsApp.HistoryStore)
+      val points =
+        val it = store.fetch("RDSA.NL", java.time.Instant.ofEpochMilli(0L), java.time.Instant.parse("2022-01-01T00:00:00Z"))
+        try it.asScala.map(kv => ujson.read(kv.value)).toVector
+        finally it.close()
+
+      // Full week history points are retained
+      assertEquals(points.size, 7)
+      // First point on Day 1 (Nov 8) is still present and valid
+      assertEquals(points.head("close").num, 100.0)
+      // Last point on Day 5 (Nov 12) is also present
+      assertEquals(points.last("close").num, 125.0)
+
+      // Verify that EMA from Day 1 carried over smoothly into Day 2
+      val day1LastEmaFast = points(2)("ema38").num
+      val day1LastEmaSlow = points(2)("ema100").num
+      val day2FirstClose = 110.0
+      val expectedDay2FirstFast = (2.0 / 39.0) * day2FirstClose + (1.0 - 2.0 / 39.0) * day1LastEmaFast
+      val expectedDay2FirstSlow = (2.0 / 101.0) * day2FirstClose + (1.0 - 2.0 / 101.0) * day1LastEmaSlow
+      assert(Math.abs(points(3)("ema38").num - expectedDay2FirstFast) < 1e-12)
+      assert(Math.abs(points(3)("ema100").num - expectedDay2FirstSlow) < 1e-12)
+    }

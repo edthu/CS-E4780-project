@@ -218,7 +218,7 @@ object StreamsApp:
       windowResultsTopic: String,
       advisoryTopic: String = AdvisoryTopic,
       symbolTopic: String = SymbolTopic,
-      historyRetention: Duration = Duration.ofDays(8)
+      historyRetention: Duration = Duration.ofDays(14)
   ): Topology =
     val builder = new StreamsBuilder()
     val stringSerde = Serdes.String()
@@ -306,7 +306,7 @@ object StreamsApp:
     val advisoryTopic = sys.env.getOrElse("KAFKA_ADVISORY_TOPIC", AdvisoryTopic)
     val symbolTopic = sys.env.getOrElse("KAFKA_SYMBOL_TOPIC", SymbolTopic)
     val queryPort = sys.env.getOrElse("STREAMS_QUERY_PORT", "7070").toInt
-    val retentionDays = sys.env.getOrElse("EMA_HISTORY_RETENTION_DAYS", "8").toLong
+    val retentionDays = sys.env.getOrElse("EMA_HISTORY_RETENTION_DAYS", "14").toLong
     val standbys = sys.env.getOrElse("STREAMS_STANDBY_REPLICAS", "0").toInt
     // DEBUG adds state-store put/get/flush latencies and RocksDB metrics (bytes
     // written, memtable flush time, write stalls), which the perf harness scrapes

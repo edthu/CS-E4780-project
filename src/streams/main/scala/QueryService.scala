@@ -65,7 +65,7 @@ final class QueryService(streams: KafkaStreams, advertisedHost: String, port: In
       case Some(symbol) =>
         val from = params.get("from").flatMap(_.toLongOption).getOrElse(0L)
         val to = params.get("to").flatMap(_.toLongOption).getOrElse(Long.MaxValue)
-        val limit = params.get("limit").flatMap(_.toIntOption).filter(_ > 0).getOrElse(2000)
+        val limit = params.get("limit").flatMap(_.toIntOption).filter(_ > 0).getOrElse(5000)
         val localOnly = params.contains("local")
 
         val metadata =

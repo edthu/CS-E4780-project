@@ -21,6 +21,20 @@ class ProducerAppSuite extends munit.FunSuite:
 
     assertEquals(ProducerApp.orderCsvFiles(Seq(weekend, trading)), Vector(trading))
 
+  test("orders full week of daily CSVs (08-11 to 14-11) chronologically and skips weekend days"):
+    val directory = Files.createTempDirectory("producer-week-test")
+    val day08 = csv(directory.resolve("debs2022-gc-trading-day-08-11-21.csv"), "08-11-2021", "08:00:00.000")
+    val day09 = csv(directory.resolve("debs2022-gc-trading-day-09-11-21.csv"), "09-11-2021", "08:00:00.000")
+    val day10 = csv(directory.resolve("debs2022-gc-trading-day-10-11-21.csv"), "10-11-2021", "08:00:00.000")
+    val day11 = csv(directory.resolve("debs2022-gc-trading-day-11-11-21.csv"), "11-11-2021", "08:00:00.000")
+    val day12 = csv(directory.resolve("debs2022-gc-trading-day-12-11-21.csv"), "12-11-2021", "08:00:00.000")
+    val day13 = Files.writeString(directory.resolve("debs2022-gc-trading-day-13-11-21.csv"), header + "AAA,E,0.0,02:00:00.000,13-11-2021\n", StandardCharsets.UTF_8)
+    val day14 = Files.writeString(directory.resolve("debs2022-gc-trading-day-14-11-21.csv"), header + "AAA,E,,,,\n", StandardCharsets.UTF_8)
+
+    val unordered = Seq(day12, day14, day09, day13, day08, day11, day10)
+    val ordered = ProducerApp.orderCsvFiles(unordered)
+    assertEquals(ordered, Vector(day08, day09, day10, day11, day12))
+
   test("timestamp pacing scales elapsed event time and permits unpaced replay"):
     val start = "2021-11-08T09:00:00.000"
     val tenSecondsLater = "2021-11-08T09:00:10.000"

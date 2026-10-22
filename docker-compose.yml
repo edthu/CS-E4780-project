@@ -81,7 +81,7 @@ services:
       STREAMS_QUERY_PORT: "7070"
       STREAMS_STATE_DIR: /var/lib/kafka-streams
       STREAMS_STANDBY_REPLICAS: "0"
-      EMA_HISTORY_RETENTION_DAYS: "8"
+      EMA_HISTORY_RETENTION_DAYS: "14"
     volumes:
       # Keeps RocksDB state across restarts so the app restores locally instead
       # of replaying every changelog from the broker. Each replica gets its own
@@ -130,7 +130,7 @@ services:
       STREAMS_QUERY_URL: http://streams:7070
       UI_REFRESH_SECONDS: "5"
       SYMBOL_CACHE_TTL: "60"
-      UI_MAX_POINTS: "1000"
+      UI_MAX_POINTS: "5000"
     depends_on:
       kafka:
         condition: service_healthy
