@@ -132,8 +132,8 @@ def _to_time(ms: float) -> datetime:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
 
 
-def build_figure(symbol: str, points: list[dict]) -> go.Figure:
-    times = [_to_time(p["windowStart"]) for p in points]
+def build_figure(symbol: str, points: list[dict], is_single_day: bool = False) -> go.Figure:
+    times = [_to_time(p["windowStart"]).strftime("%Y-%m-%d %H:%M") for p in points]
 
     figure = go.Figure()
     figure.add_trace(
@@ -173,6 +173,29 @@ def build_figure(symbol: str, points: list[dict]) -> go.Figure:
             )
         )
 
+    # In multi-day view, add session break dividers between consecutive trading days
+    if not is_single_day:
+        for i in range(1, len(points)):
+            d_prev = _to_time(points[i - 1]["windowStart"]).date()
+            d_curr = _to_time(points[i]["windowStart"]).date()
+            if d_curr != d_prev:
+                figure.add_vline(
+                    x=times[i],
+                    line_width=1,
+                    line_dash="dot",
+                    line_color="#555c6d",
+                )
+                figure.add_annotation(
+                    x=times[i],
+                    y=1.0,
+                    yref="paper",
+                    yanchor="bottom",
+                    xanchor="left",
+                    text=d_curr.strftime("%b %d"),
+                    showarrow=False,
+                    font=dict(size=11),
+                )
+
     figure.update_layout(
         template="plotly_dark",
         title=f"{symbol} — 5-minute tumbling-window EMAs",
@@ -185,6 +208,7 @@ def build_figure(symbol: str, points: list[dict]) -> go.Figure:
         xaxis_title=None,
         yaxis_title="EMA",
     )
+    figure.update_xaxes(type="category", nticks=12)
     return figure
 
 
@@ -253,16 +277,59 @@ def render_chart() -> None:
         )
         return
 
-    st.plotly_chart(build_figure(symbol, points), use_container_width=True)
+    # Extract unique dates in order of appearance
+    unique_dates: list = []
+    for p in points:
+        d = _to_time(p["windowStart"]).date()
+        if d not in unique_dates:
+            unique_dates.append(d)
 
-    advisories = [p for p in points if p.get("signal")]
-    latest = points[-1]
+    date_options = ["All week"] + [f"{d.strftime('%a, %b')} {d.day}" for d in unique_dates]
+    label_to_date = {f"{d.strftime('%a, %b')} {d.day}": d for d in unique_dates}
+
+    selected_day = "All week"
+    if len(unique_dates) > 1:
+        pills_fn = getattr(st, "pills", None) or getattr(st, "segmented_control", None)
+        if pills_fn:
+            choice = pills_fn(
+                "Timeframe",
+                options=date_options,
+                default="All week",
+                key=f"timeframe_{symbol}",
+                label_visibility="collapsed",
+            )
+            selected_day = choice or "All week"
+        else:
+            selected_day = st.radio(
+                "Timeframe",
+                options=date_options,
+                index=0,
+                horizontal=True,
+                key=f"timeframe_{symbol}",
+                label_visibility="collapsed",
+            )
+
+    if selected_day != "All week" and selected_day in label_to_date:
+        target_date = label_to_date[selected_day]
+        active_points = [p for p in points if _to_time(p["windowStart"]).date() == target_date]
+        is_single_day = True
+    else:
+        active_points = points
+        is_single_day = False
+
+    st.plotly_chart(
+        build_figure(symbol, active_points, is_single_day=is_single_day),
+        use_container_width=True,
+    )
+
+    advisories = [p for p in active_points if p.get("signal")]
+    latest = active_points[-1]
     left, middle, right = st.columns(3)
     left.metric("EMA 38", f"{latest['ema38']:.4f}")
     middle.metric("EMA 100", f"{latest['ema100']:.4f}")
     right.metric("Advisories in view", len(advisories))
 
-    render_tables(points)
+    render_tables(active_points)
 
 
 # --------------------------------------------------------------------------
