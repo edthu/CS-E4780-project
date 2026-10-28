@@ -13,8 +13,12 @@ when Infront received the update) and writes:
   output/profile/summary.json            peaks and top symbols for visualisation
   output/profile/dataset_profile.html    interactive page built from summary.json
 
-A "price event" is a row with Last > 0, which is what the producer forwards.
-Volume is the sum of "Last volume" over price events.
+The event count includes every row with a usable system timestamp, regardless
+of whether the producer would forward it. Price events are the subset with
+non-empty ID, SecType, and Last, plus a finite, positive Last price and a
+valid event timestamp. The timestamp uses Trading date/time when both are
+present, otherwise it falls back to system Date/Time, matching the producer.
+Volume is summed only over those price events.
 
 Run:  uv run scripts/profile_dataset.py [data_dir] [out_dir]
       SUMMARY_ONLY=1 uv run scripts/profile_dataset.py   # rebuild summary.json from the parquet files
@@ -67,16 +71,31 @@ def main() -> None:
         con.execute(f"""
             INSERT INTO sym_sec
             SELECT symbol, any_value(sectype), sec, count(*),
-                   count(*) FILTER (WHERE price > 0),
-                   coalesce(sum(vol) FILTER (WHERE price > 0 AND vol > 0), 0)
+                   count(*) FILTER (WHERE is_price_event),
+                   coalesce(sum(vol) FILTER (WHERE is_price_event AND vol > 0), 0)
             FROM (
                 SELECT c00 AS symbol, c01 AS sectype,
                        date_trunc('second', try_strptime(c02 || ' ' || c03, '%d-%m-%Y %H:%M:%S.%g')) AS sec,
                        try_cast(c21 AS DOUBLE) AS price,
-                       try_cast(c22 AS DOUBLE) AS vol
+                       try_cast(c22 AS DOUBLE) AS vol,
+                       (
+                           nullif(trim(c00), '') IS NOT NULL
+                           AND nullif(trim(c01), '') IS NOT NULL
+                           AND try_cast(c21 AS DOUBLE) > 0
+                           AND isfinite(try_cast(c21 AS DOUBLE))
+                           AND try_strptime(
+                               CASE
+                                   WHEN nullif(trim(c26), '') IS NOT NULL
+                                    AND nullif(trim(c23), '') IS NOT NULL
+                                   THEN trim(c26) || ' ' || trim(c23)
+                                   ELSE trim(c02) || ' ' || trim(c03)
+                               END,
+                               '%d-%m-%Y %H:%M:%S.%g'
+                           ) IS NOT NULL
+                       ) AS is_price_event
                 FROM {csv_source(path)}
             )
-            WHERE sec IS NOT NULL AND symbol IS NOT NULL
+            WHERE sec IS NOT NULL
             GROUP BY symbol, sec
         """)
         print(f"{path.name}: {time.time() - started:.0f}s", flush=True)
@@ -88,12 +107,14 @@ def main() -> None:
     con.execute(f"""COPY (
         SELECT symbol, any_value(sectype) sectype, date_trunc('minute', sec) ts,
                sum(events) events, sum(price_events) price_events, sum(volume) volume
-        FROM sym_sec GROUP BY symbol, ts ORDER BY symbol, ts
+        FROM sym_sec WHERE symbol IS NOT NULL
+        GROUP BY symbol, ts ORDER BY symbol, ts
     ) TO '{OUT_DIR}/symbol_minute.parquet'""")
     con.execute(f"""COPY (
-        SELECT ts, sum(events) events, sum(price_events) price_events, sum(volume) volume,
+        SELECT date_trunc('minute', sec) ts, sum(events) events,
+               sum(price_events) price_events, sum(volume) volume,
                count(DISTINCT symbol) active_symbols
-        FROM '{OUT_DIR}/symbol_minute.parquet' GROUP BY ts ORDER BY ts
+        FROM sym_sec GROUP BY ts ORDER BY ts
     ) TO '{OUT_DIR}/minute_totals.parquet'""")
 
     write_summary(con)
