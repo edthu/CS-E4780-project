@@ -45,10 +45,7 @@ object CsvEventParser:
               case Some(priceText) =>
                 val parsed = for
                   price <- parsePrice(priceText, rowNumber)
-                  tradingTime <- required(row, "trading time", rowNumber)
-                  date <- required(row, "trading date", rowNumber)
-                  _ <- validateDate(date, rowNumber)
-                  timestamp <- parseTimestamp(date, tradingTime, rowNumber)
+                  timestamp <- parseEventTimestamp(row, rowNumber)
                 yield ParseResult.Accepted(Event(symbol, securityType, price, timestamp))
                 parsed match
                   case Right(result) => result
@@ -73,9 +70,24 @@ object CsvEventParser:
       RejectedRow(rowNumber, s"invalid price: $value")
     )
 
+  private def parseEventTimestamp(row: Map[String, String], rowNumber: Long): Either[RejectedRow, String] =
+    val tradingDate = row.get("trading date").map(_.trim).filter(_.nonEmpty)
+    val tradingTime = row.get("trading time").map(_.trim).filter(_.nonEmpty)
+    val (dateResult, timeResult) =
+      (tradingDate, tradingTime) match
+        case (Some(date), Some(time)) => (Right(date), Right(time))
+        case _ => (required(row, "date", rowNumber), required(row, "time", rowNumber))
+
+    for
+      date <- dateResult
+      time <- timeResult
+      _ <- validateDate(date, rowNumber)
+      timestamp <- parseTimestamp(date, time, rowNumber)
+    yield timestamp
+
   private def validateDate(value: String, rowNumber: Long): Either[RejectedRow, Unit] =
     Try(java.time.LocalDate.parse(value, dateFormatter)).toOption.toRight(
-      RejectedRow(rowNumber, s"invalid trading date: $value")
+      RejectedRow(rowNumber, s"invalid date: $value")
     ).map(_ => ())
 
   private def parseTimestamp(

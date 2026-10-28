@@ -2,6 +2,8 @@ class CsvEventParserSuite extends munit.FunSuite:
   private val validRow = Map(
     "ID" -> "AAPL.ETR",
     "SecType" -> "E",
+    "Date" -> "08-11-2021",
+    "Time" -> "01:01:07.000",
     "Last" -> "123.45",
     "Trading time" -> "01:01:07.000",
     "Trading date" -> "08-11-2021"
@@ -11,6 +13,20 @@ class CsvEventParserSuite extends munit.FunSuite:
     val result = CsvEventParser.parse(1, CsvEventParser.normalizeHeaders(validRow))
     assertEquals(
       result,
+      ParseResult.Accepted(Event("AAPL.ETR", "E", 123.45, "2021-11-08T01:01:07.000"))
+    )
+
+  test("falls back to system Date and Time when Trading date is blank"):
+    val row = validRow - "Trading date"
+    assertEquals(
+      CsvEventParser.parse(6, CsvEventParser.normalizeHeaders(row)),
+      ParseResult.Accepted(Event("AAPL.ETR", "E", 123.45, "2021-11-08T01:01:07.000"))
+    )
+
+  test("falls back to system Date and Time when either trading timestamp field is blank"):
+    val row = validRow.updated("Trading date", "08-11-2021").updated("Trading time", "")
+    assertEquals(
+      CsvEventParser.parse(7, CsvEventParser.normalizeHeaders(row)),
       ParseResult.Accepted(Event("AAPL.ETR", "E", 123.45, "2021-11-08T01:01:07.000"))
     )
 

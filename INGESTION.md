@@ -10,7 +10,9 @@ The source mapping is:
 - `ID` -> `symbol`
 - `SecType` -> `securityType`
 - `Last` -> `price`
-- `Trading date` + `Trading time` -> ISO-8601 `timestamp`
+- `Trading date` + `Trading time` -> ISO-8601 `timestamp` when both are
+  populated; otherwise `Date` + `Time` provide the event timestamp. This
+  fallback is needed because valid price rows can have a blank `Trading date`.
 
 Only rows with a valid `Last` price are published. Rows without `Last` are
 counted as expected non-price rows; malformed relevant rows are counted as
