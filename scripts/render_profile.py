@@ -46,6 +46,8 @@ def render(out_dir: Path) -> Path:
         "totals": s["totals"],
         "byDay": s["by_day"],
         "byExchange": s["by_exchange"],
+        "priceSymbolStats": s["price_symbol_stats"],
+        "priceSymbolBins": s["price_symbol_bins"],
         "minute": {
             "e": dense(s["minute_series"], start, step, minutes, "e"),
             "p": dense(s["minute_series"], start, step, minutes, "p"),

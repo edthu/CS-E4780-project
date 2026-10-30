@@ -10,7 +10,9 @@ when Infront received the update) and writes:
   output/profile/minute_totals.parquet   events / price events / volume per minute
   output/profile/second_totals.parquet   the same per second (for burst peaks)
   output/profile/symbol_minute.parquet   the same per (symbol, minute)
-  output/profile/summary.json            peaks and top symbols for visualisation
+  output/profile/summary.json            peaks and symbol distribution for visualisation
+  output/profile/price_events_by_symbol.csv
+                                        per-symbol price-event counts and shares
   output/profile/dataset_profile.html    interactive page built from summary.json
 
 The event count includes every row with a usable system timestamp, regardless
@@ -124,6 +126,21 @@ def write_summary(con: duckdb.DuckDBPyConnection) -> None:
     summary = build_summary(con)
     (OUT_DIR / "summary.json").write_text(json.dumps(summary, default=str))
     print(f"wrote {OUT_DIR}/summary.json")
+    con.execute(f"""COPY (
+        WITH ranked AS (
+            SELECT symbol, sectype, price_events,
+                   row_number() OVER (ORDER BY price_events DESC, symbol) price_rank,
+                   price_events::DOUBLE / sum(price_events) OVER () event_share,
+                   sum(price_events) OVER (
+                       ORDER BY price_events DESC, symbol ROWS UNBOUNDED PRECEDING
+                   )::DOUBLE / sum(price_events) OVER () cumulative_event_share
+            FROM sym_totals
+            WHERE price_events > 0
+        )
+        SELECT price_rank, symbol, sectype, price_events, event_share, cumulative_event_share
+        FROM ranked ORDER BY price_rank
+    ) TO '{OUT_DIR}/price_events_by_symbol.csv' (HEADER, DELIMITER ',')""")
+    print(f"wrote {OUT_DIR}/price_events_by_symbol.csv")
     render(OUT_DIR)
 
 
@@ -158,8 +175,38 @@ def build_summary(con: duckdb.DuckDBPyConnection) -> dict:
             sum(price_events) price_events, sum(volume) volume
             FROM {minute} GROUP BY 1 ORDER BY 1"""),
         "by_exchange": rows(con, f"""SELECT split_part(symbol, '.', -1) exchange, sectype,
-            sum(events) events, sum(price_events) price_events, count(*) symbols
+            sum(events) events, sum(price_events) price_events, count(*) symbols,
+            count(*) FILTER (WHERE price_events > 0) price_symbols
             FROM sym_totals GROUP BY ALL ORDER BY events DESC"""),
+        "price_symbol_stats": rows(con, """SELECT
+            count(*) symbols,
+            count(*) FILTER (WHERE price_events > 0) active_symbols,
+            count(*) FILTER (WHERE price_events = 0) zero_symbols,
+            sum(price_events) total_price_events,
+            avg(price_events) FILTER (WHERE price_events > 0) mean_price_events,
+            median(price_events) FILTER (WHERE price_events > 0) median_price_events,
+            quantile_cont(price_events, 0.9) FILTER (WHERE price_events > 0) p90_price_events,
+            quantile_cont(price_events, 0.99) FILTER (WHERE price_events > 0) p99_price_events,
+            max(price_events) max_price_events
+            FROM sym_totals""")[0],
+        "price_symbol_bins": rows(con, """WITH active AS (
+            SELECT price_events, floor(log10(price_events))::INTEGER magnitude
+            FROM sym_totals WHERE price_events > 0
+        ), bins AS (
+            SELECT magnitude, count(*) symbols, sum(price_events) price_events
+            FROM active GROUP BY magnitude
+        ), totals AS (
+            SELECT count(*) symbols, sum(price_events) price_events FROM active
+        )
+        SELECT
+            CAST(power(10, magnitude) AS BIGINT)::VARCHAR || '-' ||
+                CAST(power(10, magnitude + 1) - 1 AS BIGINT)::VARCHAR AS event_range,
+            bins.symbols,
+            100.0 * bins.symbols / totals.symbols AS symbol_share_pct,
+            bins.price_events,
+            100.0 * bins.price_events / totals.price_events AS event_share_pct
+        FROM bins CROSS JOIN totals
+        ORDER BY magnitude"""),
         # Full per-minute series (~10k points) for the week timeline.
         "minute_series": rows(con, f"""SELECT strftime(ts, '%Y-%m-%dT%H:%M') t,
             events e, price_events p, volume v, active_symbols a FROM {minute} ORDER BY ts"""),
@@ -178,7 +225,9 @@ def build_summary(con: duckdb.DuckDBPyConnection) -> dict:
             FROM {second} ORDER BY price_events DESC LIMIT 20"""),
         "second_percentiles": rows(con, f"""SELECT
             quantile_cont(events, [0.5, 0.9, 0.99, 0.999, 1.0]) events,
-            quantile_cont(price_events, [0.5, 0.9, 0.99, 0.999, 1.0]) price_events
+            quantile_cont(price_events, [0.5, 0.9, 0.99, 0.999, 1.0]) price_events,
+            sum(price_events)::DOUBLE /
+                (count(DISTINCT CAST(sec AS DATE)) * 9 * 60 * 60) mean_price_events
             FROM {second} WHERE dayofweek(sec) BETWEEN 1 AND 5
               AND hour(sec) BETWEEN 9 AND 17  -- 09:00-17:59, core trading hours"""),
         "top_by_events": top_by_events,

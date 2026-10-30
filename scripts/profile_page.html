@@ -170,6 +170,12 @@ footer p { font-size: .85rem; color: var(--muted); }
       </div>
       <div class="chips" id="sym-chips" role="group" aria-label="Symbol metric"></div>
     </div>
+    <div class="panel table-wrap">
+      <div class="chart-title"><span class="name">Price-event distribution across active symbols</span>
+        <span class="readout" id="price-symbol-readout"></span></div>
+      <table id="t-price-symbols"></table>
+      <p class="note" style="margin-top:8px">Logarithmic event-count ranges make the long tail visible. Shares are calculated among symbols with at least one price event; symbols with no price events are reported above.</p>
+    </div>
     <div class="panel">
       <div class="chart-title"><span class="name" id="bars-title"></span><span class="readout">select a row to see its timeline</span></div>
       <div class="bars" id="bars" role="listbox" aria-label="Top symbols"></div>
@@ -204,6 +210,7 @@ const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const START = Date.UTC(...D.start.split(/[-T:]/).map((v, i) => i === 1 ? +v - 1 : +v));
 const nf = new Intl.NumberFormat("en-US");
 const fmt = v => nf.format(Math.round(v));
+const percent = v => `${v > 0 && v < 0.1 ? v.toFixed(3) : v.toFixed(1)}%`;
 const compact = v => v >= 1e9 ? (v/1e9).toFixed(1)+"B" : v >= 1e6 ? (v/1e6).toFixed(1)+"M" : v >= 1e4 ? (v/1e3).toFixed(1)+"K" : fmt(v);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const tip = document.getElementById("tip");
@@ -295,10 +302,13 @@ function lineChart(svg, values, o) {
 /* ---------- intro + stats ---------- */
 const T = D.totals, pm = D.peakMinutes[0], ps = D.peakSeconds[0], ppm = D.peakPriceMinutes[0], pps = D.peakPriceSeconds[0];
 const pct = D.secondPercentiles;
+const priceSymbols = D.priceSymbolStats;
 document.getElementById("intro").textContent =
   `${compact(T.events)} events from ${fmt(T.symbols)} symbols on the Paris, Amsterdam and Frankfurt exchanges, of which ${compact(T.price_events)} carry a trade price (Last > 0) and reach the EMA pipeline. ` +
+  `Those price events come from ${fmt(priceSymbols.active_symbols)} symbols; ${fmt(priceSymbols.zero_symbols)} symbols have none. ` +
   `The load is anything but flat: almost nothing arrives overnight or at the weekend, and the busiest second carries ${fmt(ps.events)} events.`;
 const stats = [
+  ["Price-event symbols", fmt(priceSymbols.active_symbols), `${(100 * priceSymbols.active_symbols / priceSymbols.symbols).toFixed(1)}% of ${fmt(priceSymbols.symbols)} symbols`],
   ["All events", compact(T.events), `${compact(T.price_events)} price events (${(100 * T.price_events / T.events).toFixed(1)}%)`],
   ["Busiest minute", fmt(pm.events), `${isoLabel(pm.t)} · ${fmt(pm.price_events)} price`],
   ["Busiest second", fmt(ps.events), `${isoLabel(ps.t, true)}`],
@@ -364,7 +374,7 @@ function drawPeaks() {
 }
 document.getElementById("pct-note").textContent =
   `Per-second load during weekday trading hours (09:00–17:59): all events median ${fmt(pct.events[0])}, p90 ${fmt(pct.events[1])}, p99 ${fmt(pct.events[2])}, max ${fmt(pct.events[4])}; ` +
-  `price events median ${fmt(pct.price_events[0])}, p99 ${fmt(pct.price_events[2])}, max ${fmt(pct.price_events[4])}. Size Kafka partitions and Streams threads for the bursts, not the median.`;
+  `price events average ${fmt(pct.mean_price_events)}, median ${fmt(pct.price_events[0])}, p99 ${fmt(pct.price_events[2])}, max ${fmt(pct.price_events[4])}. Size Kafka partitions and Streams threads for the bursts, not the median.`;
 function chips(id, opts, get, set) {
   const box = document.getElementById(id);
   opts.forEach(([v, lab]) => {
@@ -381,8 +391,14 @@ let symBy = "e", selected = null;
 const conc = k => D.concentration.filter(r => r[k] != null).reduce((m, r) => (m[r.rank] = r[k], m), {});
 const ce = conc("events_share"), cp = conc("price_share");
 document.getElementById("conc-note").textContent =
+  `Among ${fmt(priceSymbols.active_symbols)} symbols with price activity, the mean is ${fmt(priceSymbols.mean_price_events)} and the median is ${fmt(priceSymbols.median_price_events)} price events per symbol (p90 ${fmt(priceSymbols.p90_price_events)}, p99 ${fmt(priceSymbols.p99_price_events)}; maximum ${fmt(priceSymbols.max_price_events)}). ` +
   `The distribution has a long tail: the top 10 symbols produce ${(100 * ce[10]).toFixed(1)}% of all events and ${(100 * cp[10]).toFixed(1)}% of price events; ` +
   `the top 100 produce ${(100 * ce[100]).toFixed(1)}% and ${(100 * cp[100]).toFixed(1)}%. Hot keys like these decide how evenly Kafka partitions and Streams tasks are loaded.`;
+document.getElementById("price-symbol-readout").textContent =
+  `${fmt(priceSymbols.active_symbols)} active / ${fmt(priceSymbols.symbols)} total symbols · ${compact(priceSymbols.total_price_events)} price events`;
+document.getElementById("t-price-symbols").innerHTML =
+  `<tr><th>Price events per symbol</th><th class="num">Symbols</th><th class="num">Symbol share</th><th class="num">Price events</th><th class="num">Event share</th></tr>` +
+  D.priceSymbolBins.map(r => `<tr><td>${r.event_range}</td><td class="num">${fmt(r.symbols)}</td><td class="num">${percent(r.symbol_share_pct)}</td><td class="num">${fmt(r.price_events)}</td><td class="num">${percent(r.event_share_pct)}</td></tr>`).join("");
 const exName = { FR: "Paris", NL: "Amsterdam", ETR: "Xetra" };
 function topSymbols() { return [...D.symbols].sort((a, b) => b[symBy] - a[symBy]).slice(0, 25); }
 function drawBars() {
@@ -466,9 +482,9 @@ chips("sym-chips", [["e", "All events"], ["p", "Price events"]], () => symBy, v 
 /* ---------- exchange table ---------- */
 (function () {
   const rows = D.byExchange, max = Math.max(...rows.map(r => r.events));
-  document.getElementById("t-ex").innerHTML = `<tr><th>Exchange</th><th>Type</th><th class="num">Symbols</th><th class="num">Events</th><th class="num">Share</th><th class="num">Price events</th><th class="num">Price share</th></tr>` +
+  document.getElementById("t-ex").innerHTML = `<tr><th>Exchange</th><th>Type</th><th class="num">Symbols</th><th class="num">Price-event symbols</th><th class="num">Events</th><th class="num">Share</th><th class="num">Price events</th><th class="num">Price share</th></tr>` +
     rows.map(r => `<tr><td>${exName[r.exchange] || r.exchange} (${r.exchange})</td><td>${r.sectype === "I" ? "Index" : "Equity"}</td><td class="num">${fmt(r.symbols)}</td>` +
-      `<td class="num">${fmt(r.events)}</td><td class="num">${(100 * r.events / T.events).toFixed(1)}%</td>` +
+      `<td class="num">${fmt(r.price_symbols)}</td><td class="num">${fmt(r.events)}</td><td class="num">${(100 * r.events / T.events).toFixed(1)}%</td>` +
       `<td class="num">${fmt(r.price_events)}</td><td class="num">${T.price_events ? (100 * r.price_events / T.price_events).toFixed(1) : 0}%</td></tr>`).join("");
 })();
 

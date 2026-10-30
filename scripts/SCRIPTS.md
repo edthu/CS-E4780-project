@@ -25,6 +25,11 @@ uv run scripts/profile_dataset.py <data_dir> <out_dir>
 uv run profile_dataset.py ../data ../profile-outputs
 ```
 
+The profile includes the number of symbols with at least one valid price event,
+per-symbol median and tail percentiles, and a logarithmic distribution table.
+It also writes `price_events_by_symbol.csv` with each active symbol's count,
+share of all price events, and cumulative share.
+
 ## Pipeline Scripts
 
 ```bash
