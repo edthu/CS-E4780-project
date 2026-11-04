@@ -43,13 +43,6 @@ services:
     volumes:
       - ./tests/jmx:/jmx:ro
 
-  consumer:
-    environment:
-      CONSUMER_LOG_LEVEL: SUMMARY
-      JAVA_TOOL_OPTIONS: -javaagent:/jmx/agent.jar=9404:/jmx/exporter.yml
-    volumes:
-      - ./tests/jmx:/jmx:ro
-
   ui:
     ports: !override
       - "18501:8501"

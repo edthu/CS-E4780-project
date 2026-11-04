@@ -1,4 +1,4 @@
-/** JSON codec shared by the producer, consumer and streams modules. */
+/** JSON codec shared by the producer and streams modules. */
 object EventJson:
   def render(event: Event): String =
     ujson.Obj(

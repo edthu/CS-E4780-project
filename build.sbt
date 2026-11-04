@@ -62,19 +62,6 @@ lazy val producer = project
     )
   )
 
-lazy val consumer = project
-  .in(file("src/consumer"))
-  .dependsOn(common)
-  .settings(commonSettings, assemblySettings)
-  .settings(
-    name := "consumer",
-    libraryDependencies ++= Seq(
-      "org.apache.kafka" % "kafka-clients" % kafkaVersion,
-      slf4jNop,
-      "org.scalameta" %% "munit" % munitVersion % Test
-    )
-  )
-
 lazy val streams = project
   .in(file("src/streams"))
   .dependsOn(common)
@@ -92,5 +79,5 @@ lazy val streams = project
 
 lazy val root = project
   .in(file("."))
-  .aggregate(common, producer, consumer, streams)
+  .aggregate(common, producer, streams)
   .settings(name := "cs-e4780")

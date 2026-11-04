@@ -5,6 +5,9 @@
 > (crossover advisories), alongside a symbol registry and Streamlit UI. It
 > consumes every raw tick but emits downstream results only when a window
 > closes. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the current runtime flow.
+>
+> The test consumer (`ConsumerApp`) described below has since been removed;
+> the UI and the e2e/perf harnesses read the topics and query API directly.
 
 CS-E4780 course project — Detecting Trading Trends in Financial Tick Data.
 
@@ -112,10 +115,10 @@ jars, so build the jars first.
 
 ```bash
 # 1. Build the app jars (the Docker images COPY these in)
-sbt ingestion/assembly producer/assembly consumer/assembly streams/assembly
+sbt ingestion/assembly producer/assembly streams/assembly
 
-# 2. Start the broker, the stream processor and the consumer
-docker compose up -d --build kafka streams consumer
+# 2. Start the broker and the stream processor
+docker compose up -d --build kafka streams
 
 # 3. Generate NDJSON into ./output (needs the DEBS CSV in ./data — see
 #    scripts/download-data.sh). Skip if ./output/events.ndjson already exists.
@@ -125,8 +128,8 @@ docker compose run --rm ingestion
 #    file and then stays alive, publishing any lines appended later.
 docker compose up -d producer
 
-# 5. Watch the closed-window results
-docker compose logs -f consumer
+# 5. Watch the stream processor
+docker compose logs -f streams
 ```
 
 `kafka-init` creates the topics with explicit partition counts. Inside the
@@ -135,7 +138,7 @@ Compose network the apps reach the broker at `kafka:19092`; from the host it's
 
 ### Long-running vs batch
 
-`producer`, `streams`, and `consumer` are meant to keep running so the pipeline
+`producer` and `streams` are meant to keep running so the pipeline
 stays live even when there is a lull — more tick data can arrive at any time.
 
 - **Producer** defaults to batch (read to EOF, exit). The Compose service sets
@@ -143,14 +146,12 @@ stays live even when there is a lull — more tick data can arrive at any time.
   publishes newly-appended lines instead of exiting. Pass `--follow` or set
   `PRODUCER_FOLLOW=true` to get this outside Compose; `PRODUCER_FOLLOW_INTERVAL_MS`
   (default 1000) tunes the poll cadence.
-- **Consumer** polls forever and now retries transient poll errors (e.g. a topic
-  being deleted/recreated by `reset-topics.sh`) instead of exiting.
-- The three services use Docker `restart` policies (`unless-stopped` for
-  streams/consumer, `on-failure` for the producer) so a crash self-heals without
+- The services use Docker `restart` policies (`unless-stopped` for
+  streams, `on-failure` for the producer) so a crash self-heals without
   the batch producer re-sending the whole file on a clean exit.
 
-Because the producer follows and the consumer tolerates the topic churn, running
-`scripts/reset-topics.sh` no longer leaves them dead — they stay up and resume
+Because the producer follows, running
+`scripts/reset-topics.sh` no longer leaves it dead — they stay up and resume
 once new data flows through the fresh topics.
 
 ### Locally with sbt
@@ -163,25 +164,6 @@ container-written `./output` is root-owned):
 ```bash
 sbt streams/run                              # stream processor (stays running)
 sbt "producer/run samples/events.ndjson"     # publish
-sbt consumer/run                             # read closed-window results
-```
-
-### Consumer log levels
-
-`CONSUMER_LOG_LEVEL` controls verbosity (default `SUMMARY`):
-
-- `ALL` — print every closed-window result as `key -> value`, including close,
-  EMA values, window bounds, and any crossover signal.
-- `SUMMARY` — periodic throughput stats only (`consumed`, `recordsPerSecond`,
-  `avgRecordsPerSecond`), mirroring the ingestion app's rows/second logging.
-  Cadence set by `CONSUMER_SUMMARY_INTERVAL_MS` (default 2000). A final
-  `[consumer] closed ...` line prints in both modes on shutdown.
-
-```bash
-# Docker: flip the level for a one-off run
-docker compose run --rm -e CONSUMER_LOG_LEVEL=ALL consumer
-# Local:
-CONSUMER_LOG_LEVEL=ALL sbt consumer/run
 ```
 
 ### Resetting topics

@@ -68,10 +68,6 @@ JMX_SERIES: dict[str, dict[str, tuple]] = {
         "jmx_request_latency_avg_ms": ("max", "kafka_producer_producer_metrics_request_latency_avg", {}),
         "jmx_network_io_ms_total": ("sum", "kafka_producer_producer_metrics_io_time_ns", {}),
     },
-    "consumer": {
-        "jmx_records_consumed_rate": ("sum", "kafka_consumer_consumer_fetch_manager_metrics_records_consumed_rate", {"topic": None}),
-        "jmx_fetch_latency_avg_ms": ("max", "kafka_consumer_consumer_fetch_manager_metrics_fetch_latency_avg", {"topic": None}),
-    },
 }
 
 

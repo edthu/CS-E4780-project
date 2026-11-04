@@ -13,11 +13,11 @@ fi
 : "${REPLAY_SPEED:=0}"
 export REPLAY_SPEED
 
-echo "==> building producer, streams, and consumer jars"
-sbt -batch producer/assembly streams/assembly consumer/assembly
+echo "==> building producer and streams jars"
+sbt -batch producer/assembly streams/assembly
 
 echo "==> starting the Kafka pipeline (replay speed: ${REPLAY_SPEED}x)"
 docker compose up --build -d
 
 echo "==> pipeline started; UI: http://localhost:8501"
-echo "==> follow logs: docker compose logs -f producer streams consumer"
+echo "==> follow logs: docker compose logs -f producer streams"

@@ -12,8 +12,8 @@ See the Mermaid diagrams and the motivation behind each architectural choice in
 ### With Docker Compose (recommended)
 
 The live pipeline reads CSV files directly in the producer; there is no separate
-ingestion run or NDJSON handoff step. The consumer remains a separate downstream
-service, and Compose starts it together with Kafka, Streams, and the UI.
+ingestion run or NDJSON handoff step. Compose starts it together with Kafka,
+Streams, and the UI.
 
 ```bash
 # Download the entire week of datasets (08-11-21 to 14-11-21):
@@ -26,7 +26,7 @@ service, and Compose starts it together with Kafka, Streams, and the UI.
 ./scripts/run-pipeline.sh
 
 # Open the UI at http://localhost:8501. Follow service logs with:
-docker compose logs -f producer streams consumer
+docker compose logs -f producer streams
 ```
 
 The producer discovers top-level `*.csv` files in `data/`, orders them by the
@@ -39,9 +39,7 @@ pace events against their source timestamps:
 REPLAY_SPEED=1 ./scripts/run-pipeline.sh  # real-time event-time pacing
 ```
 
-Consumer summary logging is the default so a large replay does not print every
-event. For a small sample, `CONSUMER_LOG_LEVEL=ALL ./scripts/run-pipeline.sh`
-prints each closed-window result. Stop the services with `docker compose down`.
+Stop the services with `docker compose down`.
 
 ### Manual step-by-step startup
 
@@ -51,22 +49,21 @@ the sample day), then:
 
 ```bash
 # Build the app jars copied into the Docker images.
-sbt -batch producer/assembly streams/assembly consumer/assembly
+sbt -batch producer/assembly streams/assembly
 
 # Start Kafka, create topics, and start the downstream applications.
-docker compose up -d --build kafka kafka-init streams consumer ui
+docker compose up -d --build kafka kafka-init streams ui
 
 # Start the CSV replay producer (unpaced by default). Set REPLAY_SPEED=1 for
 # real-time playback.
 docker compose up -d --build producer
 
 # Follow logs and open the UI.
-docker compose logs -f producer streams consumer
+docker compose logs -f producer streams
 ```
 
 The producer can also be started before the other app services; Compose will
-start its Kafka and topic-initialization dependencies. The consumer reads one
-result per closed window and does not trigger CSV ingestion.
+start its Kafka and topic-initialization dependencies.
 
 See [INGESTION.md](INGESTION.md) for CSV field mapping, event validation, and
 replay ordering and pacing details.

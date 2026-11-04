@@ -27,9 +27,9 @@ KAFKA_BOOTSTRAP = "localhost:29092"
 UI_URL = "http://localhost:18501"
 JMX_PORT = 9404
 QUERY_PORT = 7070
-JVM_SERVICES = ("kafka", "streams", "producer", "consumer")
-APP_SERVICES = ("kafka", "kafka-init", "streams", "producer", "consumer", "ui")
-JARS = ("producer", "consumer", "streams")
+JVM_SERVICES = ("kafka", "streams", "producer")
+APP_SERVICES = ("kafka", "kafka-init", "streams", "producer", "ui")
+JARS = ("producer", "streams")
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,7 @@ class Stack:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         EVENTS_FILE.write_text("")
         if build_images:
-            self.compose("build", "producer", "consumer", "streams", "ui")
+            self.compose("build", "producer", "streams", "ui")
         self.compose("up", "-d", "--scale", f"streams={streams_replicas}", *APP_SERVICES)
         self.wait_streams_running(streams_replicas)
         self.wait_for(lambda: requests.get(f"{UI_URL}/_stcore/health", timeout=2).ok,

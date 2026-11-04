@@ -23,7 +23,7 @@ Linux with cgroup v2 and Docker Compose ≥ 2.24. The harness reads
 python3 -m venv tests/.venv
 tests/.venv/bin/pip install -r tests/requirements.txt
 tests/jmx/fetch-agent.sh                                   # Prometheus JMX exporter agent
-sbt producer/assembly consumer/assembly streams/assembly   # jars the images copy in
+sbt producer/assembly streams/assembly   # jars the images copy in
 ```
 
 Both harnesses run the stack under their own Compose project (`trading-e2e`,
@@ -37,7 +37,7 @@ are left alone. The two harnesses share those ports, so run them one at a time.
 tests/.venv/bin/pytest tests/e2e -v
 ```
 
-This builds the jars and images, starts kafka, streams, producer, consumer and
+This builds the jars and images, starts kafka, streams, producer and
 the UI, and appends a crafted dataset to the file the producer follows:
 4 symbols × 80 windows, including BUY→SELL→BUY and BUY→SELL crossovers, an
 out-of-order tick, and a late tick. It then checks the following against
@@ -106,7 +106,6 @@ test override sets the producer's file poll to 20 ms, down from 1000 ms.
 | kafka | **Not a database**: Kafka's own append-only commit log, i.e. segment files per partition under `log.dirs` (`/var/lib/kafka/data` in tests; the normal stack uses Kafka's default `/tmp/kafka-logs` in the container layer) | `jmx_log_append_*`: time appending produced batches to the log (`LocalTimeMs{Produce}`); `jmx_log_read_*`: the same for fetches; `jmx_log_flush_*`: segment fsync time; broker bytes in/out |
 | streams | **RocksDB**, one instance per state store and task, backed up to changelog topics | `jmx_state_write_ms_per_s` / `jmx_state_read_ms_per_s` / `jmx_state_flush_ms_per_s`: ms per second spent in store puts / gets+fetches+ranges / flushes; RocksDB bytes written/read, memtable flush time, write stalls |
 | producer | none; reads the input file and writes to Kafka | `jmx_record_send_rate` (**events/s**), request latency, network I/O time. The container log also prints `recordsPerSecond` every 2 s |
-| consumer | none | records consumed/s, fetch latency |
 | ui | none | OS metrics only |
 
 `_per_s` values are rates over the run. `_avg_ms` is the average per broker

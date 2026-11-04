@@ -6,7 +6,7 @@ plan.png → assignment commentary.
 
 ## Data flow (runtime)
 
-How events move from the raw CSV through Kafka to the consumer/UI.
+How events move from the raw CSV through Kafka to the UI.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,6 @@ flowchart LR
     subgraph apps["Scala 3 apps (JVM)"]
         producer["producer<br/>CSV replay"]
         streams["streams<br/>StreamsApp<br/>5-min window EMA + QueryService (:7070)"]
-        consumer["consumer<br/>ConsumerApp<br/>ALL / SUMMARY logs"]
     end
 
     subgraph broker["Kafka broker (KRaft, single node)"]
@@ -35,7 +34,6 @@ flowchart LR
     streams -->|"one record per crossover"| tadv
     streams -->|"one record per new symbol"| tsym
     streams --> store
-    tresults --> consumer
 
     tsym -->|"replay + cache<br/>(group-less assign)"| ui
     store -->|"interactive query<br/>GET /ema?symbol="| ui
@@ -60,7 +58,6 @@ flowchart TB
         initS["kafka-init<br/>(one-shot, creates topics)"]
         producerS["producer<br/>(CSV replay, batch)"]
         streamsS["streams x N<br/>(long-running, expose :7070)"]
-        consumerS["consumer<br/>(long-running)"]
         uiS["ui<br/>Streamlit, ports 8501:8501"]
     end
 
@@ -73,7 +70,6 @@ flowchart TB
     initS -->|"creates topics,<br/>symbols = compacted"| kafka
     producerS -->|"KAFKA_BOOTSTRAP=kafka:19092"| kafka
     streamsS -->|depends_on: healthy| kafka
-    consumerS -->|depends_on: healthy| kafka
     uiS -->|"reads the symbols topic"| kafka
     uiS -->|"HTTP /ema to http://streams:7070"| streamsS
     streamsS -.->|"IQ proxy hop to the<br/>replica owning the symbol"| streamsS
@@ -82,7 +78,7 @@ flowchart TB
     host -.-> uiS
 
     classDef svc fill:#e8f0fe,stroke:#4285f4;
-    class kafka,initS,producerS,streamsS,consumerS,uiS svc;
+    class kafka,initS,producerS,streamsS,uiS svc;
 ```
 
 ## Build flow (source → running container)
@@ -111,17 +107,14 @@ flowchart LR
 flowchart TB
     common["common<br/>Event, EventJson, CsvEventParser<br/>(ujson, commons-csv)"]
     producer["producer<br/>(kafka-clients)"]
-    consumer["consumer<br/>(kafka-clients)"]
     streams["streams<br/>(kafka-streams)<br/>StreamsApp + QueryService"]
     root["root (aggregate)"]
 
     producer --> common
-    consumer --> common
     streams --> common
 
     root -.aggregates.-> common
     root -.aggregates.-> producer
-    root -.aggregates.-> consumer
     root -.aggregates.-> streams
 ```
 

@@ -100,24 +100,6 @@ services:
       kafka-init:
         condition: service_completed_successfully
 
-  consumer:
-    build:
-      context: .
-      args:
-        MODULE: consumer
-        MAIN_CLASS: ConsumerApp
-    restart: unless-stopped
-    environment:
-      KAFKA_BOOTSTRAP: kafka:19092
-      KAFKA_TOPIC: window-results
-      KAFKA_GROUP: trading-consumer
-      CONSUMER_LOG_LEVEL: ${CONSUMER_LOG_LEVEL:-SUMMARY}
-    depends_on:
-      kafka:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-
   ui:
     build:
       context: ./ui

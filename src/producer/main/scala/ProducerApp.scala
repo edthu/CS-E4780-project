@@ -21,8 +21,7 @@ import scala.jdk.CollectionConverters.*
   *   - `--follow` retains the previous append-follow mode for NDJSON files.
   *
   * Throughput is logged every `PRODUCER_SUMMARY_INTERVAL_MS` (default 2000) as
-  * records/second over the last interval and since start, mirroring
-  * `ConsumerApp`'s summary line.
+  * records/second over the last interval and since start.
   */
 object ProducerApp:
   private val defaultInput = "data"
