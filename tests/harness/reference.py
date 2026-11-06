@@ -26,11 +26,13 @@ from kafka.partitioner.default import murmur2
 
 WINDOW_MS = 5 * 60 * 1000
 CEST = ZoneInfo("Europe/Amsterdam")
+UTC = ZoneInfo("UTC")
 
 
 def to_epoch_ms(timestamp: str) -> int:
     dt = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=CEST)
-    return round(dt.timestamp() * 1000)
+    delta = dt.astimezone(UTC) - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds // 1000
 
 
 def partition_of(symbol: str, partitions: int) -> int:

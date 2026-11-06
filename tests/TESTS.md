@@ -39,8 +39,8 @@ tests/.venv/bin/pytest tests/e2e -v
 
 This builds the jars and images, starts kafka, streams, producer and
 the UI, and appends a crafted dataset to the file the producer follows:
-4 symbols × 80 windows, including BUY→SELL→BUY and BUY→SELL crossovers, an
-out-of-order tick, and a late tick. It then checks the following against
+4 symbols × 80 windows, including BUY→SELL→BUY and BUY→SELL crossovers and an
+out-of-order tick. It then checks the following against
 `tests/harness/reference.py`, which is written from the assignment and not from
 the Scala code:
 
@@ -115,6 +115,18 @@ request. `{mean, max}` pairs are gauges sampled every second.
 `process-rate`, and consumer-group lag in `lag.csv`. The lag uses *committed*
 offsets, so it rises and falls with the 30 s commit interval. Use `process-rate`
 to judge whether Streams keeps up.
+
+## CSV analysis of late price events
+
+To analyze late price events and their estimated EMA/advisory impact, scan the
+CSV in source order using the six-partition, zero-grace watermark model:
+
+```bash
+PYTHONPATH=tests tests/.venv/bin/python tests/harness/analyze_late_price_events.py
+```
+
+Pass another full-day CSV path as the optional first argument. This is a
+source-order CSV analysis; it does not start Kafka or Streams.
 
 ## Troubleshooting
 
