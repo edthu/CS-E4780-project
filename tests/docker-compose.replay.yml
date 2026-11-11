@@ -1,0 +1,24 @@
+# Override for tests/perf/run_replay.py, used on top of docker-compose.yml and
+# docker-compose.test.yml under the project name trading-replay. It replays the
+# real CSV data and puts hard limits on the containers being measured.
+services:
+  kafka:
+    cpus: ${KAFKA_CPUS:-2.0}
+
+  producer:
+    environment:
+      PRODUCER_FOLLOW: "false"
+    volumes: !override
+      - ./data:/data:ro
+      - ./tests/jmx:/jmx:ro
+      - ./tests/.work/probe:/probe
+
+  streams:
+    cpus: ${STREAMS_CPUS:-1.0}
+    mem_limit: ${STREAMS_MEM:-1536m}
+    environment:
+      # The DEBUG level set by the test override costs CPU, which would distort
+      # CPU time per event. Blank commit/cache values keep Kafka's defaults.
+      STREAMS_METRICS_LEVEL: INFO
+      STREAMS_COMMIT_INTERVAL_MS: ${STREAMS_COMMIT_INTERVAL_MS:-}
+      STREAMS_CACHE_MAX_BYTES: ${STREAMS_CACHE_MAX_BYTES:-}

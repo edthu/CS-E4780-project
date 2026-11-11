@@ -51,6 +51,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP: kafka:19092
       KAFKA_TOPIC: trading-events
+      # Optional replay range in Europe/Amsterdam time, e.g. 2021-11-11T11:30:00.
+      PRODUCER_FROM: ${REPLAY_FROM:-}
+      PRODUCER_TO: ${REPLAY_TO:-}
     volumes:
       - ./data:/data:ro
     depends_on:

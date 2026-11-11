@@ -28,7 +28,8 @@ from .stack import JMX_PORT, Container, Stack
 
 # Metric specs per service: column -> (kind, metric name(s), label filter).
 # Names are the JMX exporter's lowercased catch-all form. A label value of None
-# means "label must be absent" (e.g. client-level rather than per-topic series).
+# means "label must be absent" (e.g. client-level rather than per-topic series);
+# a callable value is a predicate on the label.
 # Kinds:
 #   sum / max    aggregate over matching series (per task, store, client ...)
 #   yammer_ms    broker histogram: mean * count, i.e. cumulative milliseconds
@@ -36,6 +37,14 @@ from .stack import JMX_PORT, Container, Stack
 # Columns ending in _total are cumulative; run_perf.py turns them into rates.
 _BROKER_LOCAL = "kafka_network_requestmetrics_{}"
 _STATE = "kafka_streams_stream_state_metrics_{}"
+_FETCH = "kafka_consumer_consumer_fetch_manager_metrics_{}"
+
+
+def _is_main_consumer(client_id: str) -> bool:
+    """Streams also runs a restore consumer, whose records are changelog replay."""
+    return client_id.endswith("-consumer") and not client_id.endswith("-restore-consumer")
+
+
 JMX_SERIES: dict[str, dict[str, tuple]] = {
     "kafka": {
         # Time the broker spends appending produced records to the partition
@@ -60,6 +69,8 @@ JMX_SERIES: dict[str, dict[str, tuple]] = {
         "jmx_rocksdb_memtable_flush_time_avg_us": ("max", _STATE.format("memtable_flush_time_avg"), {}),
         "jmx_rocksdb_write_stall_duration_avg_us": ("max", _STATE.format("write_stall_duration_avg"), {}),
         "jmx_process_rate": ("sum", "kafka_streams_stream_thread_metrics_process_rate", {}),
+        "jmx_records_consumed_total": ("sum", _FETCH.format("records_consumed"), {"topic": None, "client_id": _is_main_consumer}),
+        "jmx_records_lag_max": ("max", _FETCH.format("records_lag_max"), {"topic": None, "client_id": _is_main_consumer}),
         "jmx_consumer_fetch_latency_avg_ms": ("max", "kafka_consumer_consumer_fetch_manager_metrics_fetch_latency_avg", {"topic": None}),
         "jmx_producer_request_latency_avg_ms": ("max", "kafka_producer_producer_metrics_request_latency_avg", {}),
     },
@@ -133,7 +144,13 @@ def parse_prometheus(text: str) -> list[tuple[str, dict[str, str], float]]:
 
 
 def _matches(labels: dict[str, str], want: dict) -> bool:
-    return all((k not in labels) if v is None else labels.get(k) == v for k, v in want.items())
+    def ok(key: str, expected) -> bool:
+        if expected is None:
+            return key not in labels
+        if callable(expected):
+            return key in labels and expected(labels[key])
+        return labels.get(key) == expected
+    return all(ok(k, v) for k, v in want.items())
 
 
 def jmx_sample(c: Container) -> dict[str, float]:

@@ -116,6 +116,80 @@ request. `{mean, max}` pairs are gauges sampled every second.
 offsets, so it rises and falls with the 30 s commit interval. Use `process-rate`
 to judge whether Streams keeps up.
 
+## 4. Benchmarks on real data
+
+`tests/perf/run_replay.py` replays slices of the real CSVs from the middle of the
+dataset, under Compose project `trading-replay` with
+`tests/docker-compose.replay.yml` on top (broker limited to 2 CPUs, each Streams
+replica to `--cpus`, default 1). All rates are **price events**, the only rows the
+producer publishes (59.4M of 289M).
+
+| Scenario | Slice (Europe/Amsterdam) | Rate |
+|---|---|---|
+| `average` | 11 Nov 11:30–12:30 | 345/s, flat |
+| `large` | 10 Nov 17:20–17:50 | 351/s mean, 946/s busiest minute, closing-auction burst at 17:35 |
+| `capacity` | 10 Nov 15:00–18:00 | 3.76M events |
+
+Any slice can be used with `--from` and `--to`. The producer takes the same range
+directly: `--from 2021-11-11T11:30:00 --to 2021-11-11T12:30:00`, or `REPLAY_FROM`
+and `REPLAY_TO` for the normal Compose stack.
+
+```bash
+PY=tests/.venv/bin/python
+
+# Throughput and scaling: drain a backlog
+$PY tests/perf/run_replay.py capacity --replicas 1,2,3,6 --repeats 3
+
+# Latency at real speed, as shipped and tuned (1 s commit, no cache)
+$PY tests/perf/run_replay.py latency --scenario average --profile shipped --no-build
+$PY tests/perf/run_replay.py latency --scenario average --profile tuned --no-build
+$PY tests/perf/run_replay.py latency --scenario large --profile shipped --no-build
+$PY tests/perf/run_replay.py latency --scenario large --profile tuned --no-build
+
+# Latency against load: speed = fraction of capacity x capacity / 345
+$PY tests/perf/run_replay.py latency --scenario average --profile tuned --speed 5,10,15,19 --no-build
+
+# Sustainability and CPU per event, without probes
+$PY tests/perf/run_replay.py latency --scenario capacity --no-probes --speed 19 --no-build
+
+$PY tests/perf/plot.py tests/results/replay-<timestamp>
+```
+
+Speeds above are 25/50/75/90% of a capacity of about 7,100 events/s, measured on
+one replica with one CPU; recompute them from your own `capacity` result.
+
+### How each number is measured
+
+**Capacity** loads the slice with Streams stopped, then starts Streams. Throughput
+is taken from Streams' `records-consumed-total` between 10% and 90% of the
+records, which leaves out startup and rebalancing. `duplicate_fraction` shows
+records consumed more than once after a rebalance. `max_speedup_from_partition_skew`
+is `total / busiest partition`, the best speedup the partitioning allows.
+
+**Sustainability** (`--no-probes`) is a paced run: the system keeps up if lag stays
+bounded. Lag uses committed offsets, so with the `shipped` profile `lag.final` can
+read tens of thousands of records just from the 30 s commit; judge the trend, or
+use `--profile tuned`. A backlog drain gets full batches on every
+poll, so treat capacity as an upper bound until this holds.
+
+**Latency** first replays 07:00 up to the slice unpaced and waits for zero lag, so
+the slice runs on populated state without the BUY burst of a cold start. Those
+EMAs still carry some zero-seed bias, so use a full replay for correctness. The
+producer sends 2 probe events per partition when event time crosses a window
+boundary, before the event that crosses it, and logs `window,symbol,t0`. Latency
+runs from that send until the point is returned by `GET /ema`. The first window is
+left out, and the last window of a slice never closes. Timed-out probes are
+reported as `timeouts`; percentiles cover completed probes only. Probes in the
+same window are correlated, so percentiles describe window-close behaviour.
+
+**CPU** is the cgroup CPU time per service between the start and end of the
+measured interval, divided by events, plus `pct_of_limit`. Fixed costs inflate CPU
+per event at low rates, so `plot.py` also fits `cpu_seconds = idle_cores * seconds
++ marginal * events` over all probe-free runs into `cpu_fit.json`.
+
+`run_replay.py` skips a replica count when `MemAvailable` is below about 1.5 GB
+per replica plus 2 GB, and prints a warning.
+
 ## CSV analysis of late price events
 
 To analyze late price events and their estimated EMA/advisory impact, scan the

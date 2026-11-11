@@ -22,6 +22,7 @@ WORK_DIR = ROOT / "tests" / ".work"
 OUTPUT_DIR = WORK_DIR / "output"
 EVENTS_FILE = OUTPUT_DIR / "events.ndjson"
 COMPOSE_FILES = [ROOT / "docker-compose.yml", ROOT / "tests" / "docker-compose.test.yml"]
+REPLAY_COMPOSE_FILE = ROOT / "tests" / "docker-compose.replay.yml"
 
 KAFKA_BOOTSTRAP = "localhost:29092"
 UI_URL = "http://localhost:18501"
@@ -49,18 +50,29 @@ class Container:
 
 
 class Stack:
-    def __init__(self, project: str):
+    def __init__(self, project: str, extra_files: tuple[Path, ...] = ()):
         self.project = project
+        self.files = [*COMPOSE_FILES, *extra_files]
+        self.env: dict[str, str] = {}  # interpolated into the Compose files
         self.client = docker.from_env()
 
     # -- lifecycle -----------------------------------------------------------
 
-    def compose(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def compose_cmd(self, *args: str) -> list[str]:
         cmd = ["docker", "compose", "-p", self.project]
-        for f in COMPOSE_FILES:
+        for f in self.files:
             cmd += ["-f", str(f)]
-        return subprocess.run(cmd + list(args), cwd=ROOT, check=check,
-                              capture_output=True, text=True)
+        return cmd + list(args)
+
+    def compose_env(self) -> dict[str, str]:
+        return {**os.environ, **self.env}
+
+    def compose(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(self.compose_cmd(*args), cwd=ROOT, check=check, env=self.compose_env(),
+                                  capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"{' '.join(exc.cmd)} failed:\n{exc.stderr}") from exc
 
     def build_jars(self) -> None:
         if os.getenv("E2E_SKIP_BUILD") == "1":
@@ -82,6 +94,25 @@ class Stack:
         self.wait_streams_running(streams_replicas)
         self.wait_for(lambda: requests.get(f"{UI_URL}/_stcore/health", timeout=2).ok,
                       "ui healthy", timeout=120)
+
+    def up_kafka(self, build_images: bool = True) -> None:
+        """Start only the broker on a clean slate and wait for its topics."""
+        if not (ROOT / "tests" / "jmx" / "agent.jar").exists():
+            raise RuntimeError("JMX agent missing; run tests/jmx/fetch-agent.sh first")
+        self.down()
+        if build_images:
+            self.compose("build", "producer", "streams")
+        self.compose("up", "-d", "kafka", "kafka-init")
+        self.wait_for(lambda: not self.containers("kafka-init"), "kafka-init finished", timeout=120)
+
+    def up_streams(self, replicas: int) -> None:
+        self.compose("up", "-d", "--no-deps", "--scale", f"streams={replicas}", "streams")
+
+    def producer_cmd(self, args: list[str], env: dict[str, str]) -> list[str]:
+        """A one-off producer: unlike `up`, `run` ignores the restart policy, so
+        a finished replay is not started again."""
+        flags = [item for k, v in env.items() for item in ("-e", f"{k}={v}")]
+        return self.compose_cmd("run", "--rm", "--no-deps", "-T", *flags, "producer", *args)
 
     def down(self) -> None:
         self.compose("down", "-v", "--remove-orphans", check=False)

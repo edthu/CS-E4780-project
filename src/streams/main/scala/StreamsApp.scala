@@ -344,6 +344,15 @@ object StreamsApp:
     props.put(StreamsConfig.NUM_STANDBY_REPLICAS_CONFIG, Integer.valueOf(standbys))
     props.put(StreamsConfig.METRICS_RECORDING_LEVEL_CONFIG, metricsLevel)
     stateDir.foreach(dir => props.put(StreamsConfig.STATE_DIR_CONFIG, dir))
+    // Unset keeps Kafka's defaults (30 s commit, 10 MB cache). A record cache in
+    // front of suppress holds window-closing updates until the next commit, so
+    // these two bound the end-to-end latency; benchmarks compare both settings.
+    sys.env.get("STREAMS_COMMIT_INTERVAL_MS").map(_.trim).filter(_.nonEmpty).foreach { value =>
+      props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, java.lang.Long.valueOf(value))
+    }
+    sys.env.get("STREAMS_CACHE_MAX_BYTES").map(_.trim).filter(_.nonEmpty).foreach { value =>
+      props.put(StreamsConfig.STATESTORE_CACHE_MAX_BYTES_CONFIG, java.lang.Long.valueOf(value))
+    }
 
     val topology =
       buildTopology(inputTopic, windowResultsTopic, advisoryTopic, symbolTopic, Duration.ofDays(retentionDays))
