@@ -125,16 +125,18 @@ $PY tests/perf/plot.py $OUT
 $PY tests/perf/plot.py $OUT-large
 ```
 
-| Output in `tests/results/final` | Use |
+| Output in `tests/results/final` | Shows |
 |---|---|
-| `scaling.png` | Throughput and speedup against replicas. For efficiency, divide speedup by replicas |
-| `latency_vs_load.png` | Latency against input rate |
-| `cpu_per_event.png` | CPU per event in the paced runs from step 4 |
-| `cpu_fit.json` | Idle cost and marginal cost per event, per service |
-| `<run>/summary.json` | All numbers for one run |
+| `table_capacity.png` | Every number of every capacity run |
+| `table_paced.png` | Every number of every latency and sustainability run |
+| `scaling.png` | Drain throughput and speedup against replicas, with the partition-skew limit. For efficiency, divide speedup by replicas |
+| `capacity_resources.png` | % of the CPU limit and CPU time per event for Streams and the broker, against replicas |
+| `latency_vs_load.png` | p50 and p95 latency against input rate |
+| `latency_runs.png` | Every probe latency of every latency run, with p50 and p95 |
+| `sustain_lag.png` | Consumer lag over time in each sustainability run |
+| `<run>/timeseries.png` | One run over time: input and processing rate, lag, probe latency, CPU and memory per service, with the measured interval shaded |
 
-The points in `cpu_per_event.png` use different replica counts, so say so if you
-use that figure.
+Each run's numbers are also in `<run>/summary.json`.
 
 ## Before using the results
 
