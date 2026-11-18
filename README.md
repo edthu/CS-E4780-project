@@ -1,11 +1,4 @@
-# CS-E4780 project — detecting trading trends in financial tick data
-
-Kafka pipeline over the DEBS 2022 trading data set: 5-minute tumbling-window
-EMAs per symbol (Query 1), buy/sell crossover advisories (Query 2), and a
-Streamlit terminal for the bonus Smart Visualization.
-
-See the Mermaid diagrams and the motivation behind each architectural choice in
-[`ai_docs/ARCHITECTURE.md`](ai_docs/ARCHITECTURE.md).
+# CS-E4780 project
 
 ## Running the pipeline
 
@@ -37,6 +30,15 @@ pace events against their source timestamps:
 
 ```bash
 REPLAY_SPEED=1 ./scripts/run-pipeline.sh  # real-time event-time pacing
+```
+
+To replay only part of the data, set `REPLAY_FROM` and/or `REPLAY_TO`. They take
+Europe/Amsterdam local time and select events in the half-open range
+`[from, to)`. The producer seeks to the start instead of parsing everything
+before it:
+
+```bash
+REPLAY_FROM=2021-11-11T11:30:00 REPLAY_TO=2021-11-11T14:00:00 ./scripts/run-pipeline.sh
 ```
 
 Stop the services with `docker compose down`.
@@ -84,8 +86,11 @@ A Streamlit container (`ui/`) on <http://localhost:8501>:
 
 It gets the chart data from the streams app's interactive-query endpoint rather
 than by consuming a topic, so the state is materialised once no matter how many
-UI replicas run. Useful knobs (all Compose env vars): `UI_REFRESH_SECONDS`,
-`SYMBOL_CACHE_TTL`, `UI_MAX_POINTS`, `UI_MAX_LISTED_SYMBOLS`.
+UI replicas run. Useful knobs (env vars read by `ui/app.py`, defaults in
+parentheses): `UI_REFRESH_SECONDS` (5), `SYMBOL_CACHE_TTL` (60),
+`UI_MAX_POINTS` (5000), `UI_MAX_LISTED_SYMBOLS` (200) and
+`REGISTRY_READ_BUDGET_SECONDS` (15). Compose sets only the first three; add the
+others to the `ui` service's environment to override them.
 
 ## Scaling
 
@@ -129,8 +134,10 @@ sbt test
 
 `StreamsTopologySuite` runs the real topology through a `TopologyTestDriver`:
 one window result per closed window, one EMA step per window, crossover-only
-advisories, and symbol-registry deduplication.
+advisories, and symbol-registry deduplication. `StreamsAppSuite`,
+`ProducerAppSuite` (including replay ranges) and `CsvEventParserSuite` cover the
+rest of the streams app, the producer and the CSV parser.
 
 The end-to-end test (real Compose stack vs. an independent reference of the
-assignment) and the performance harness (latency, CPU, memory and storage I/O
-time per container) are described in [`tests/TESTS.md`](tests/TESTS.md).
+assignment) and the performance and replay benchmarks are described in
+[`tests/TESTS.md`](tests/TESTS.md).

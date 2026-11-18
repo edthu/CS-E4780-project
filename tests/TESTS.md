@@ -2,7 +2,6 @@
 
 The steps below produce the numbers for the report's Performance Evaluation. Run
 them in order, because the speeds in steps 3 and 4 come from the result of step 2.
-[TESTS.md](TESTS.md) explains how each number is measured.
 
 Only one harness can run at a time, and the machine should be otherwise idle.
 
